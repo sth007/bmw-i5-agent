@@ -1,38 +1,4 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Virtual Environment
-.venv/
-venv/
-
-# macOS
-.DS_Store
-
-# VS Code
-.vscode/
-
-# Environment
 .env
-
-# Logs
-*.log
-
-# Test
+.venv/
+__pycache__/
 .pytest_cache/
-
-# Build
-dist/
-build/
-
-# SQLite
-*.db
-*.sqlite3
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Coverage
-.coverage
-htmlcov/

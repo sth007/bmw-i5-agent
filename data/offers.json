@@ -1,0 +1,14 @@
+[
+  {
+    "model": "BMW i5 eDrive40",
+    "price_eur": 68900,
+    "color": "black",
+    "range_km": 582
+  },
+  {
+    "model": "BMW i5 M60 xDrive",
+    "price_eur": 99900,
+    "color": "grey",
+    "range_km": 516
+  }
+]
