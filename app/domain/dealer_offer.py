@@ -5,6 +5,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
+
 class DealerOffer(BaseModel):
     offer_id: str = Field(default_factory=lambda: str(uuid4()))
 
