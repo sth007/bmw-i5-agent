@@ -1,18 +1,21 @@
-from __future__ import annotations
+from decimal import Decimal
 
-import sys
-from pathlib import Path
-
-if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from app.agent import BmwI5Agent
+from domain.bmw_configuration import BMWConfiguration
 
 
 def main() -> None:
-    agent = BmwI5Agent()
-    best_offer, score = agent.pick_best_offer()
-    print(f"Best offer: {best_offer.model} ({score} points)")
+    configuration = BMWConfiguration(
+        configuration_id="chtwyiio",
+        configuration_url="https://configure.bmw.de/de_DE/configid/chtwyiio",
+        model="BMW i5 Touring",
+        variant="xDrive40",
+        package="M Sportpaket",
+        maximum_target_price=Decimal("60000.00"),
+        payment_preference="cash",
+        equipment=[],
+    )
+
+    print(configuration.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
