@@ -1,0 +1,174 @@
+{
+  "name": "BMW – Incoming Dealer Offers",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment filename:pdf"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -240,
+        -144
+      ],
+      "id": "bf96803c-cb83-4e1a-a29a-f1118747d742",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "yUquPpwt91kgT3Mv",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        128,
+        -144
+      ],
+      "id": "8b092786-58c3-4917-b803-16dc92c857da",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://bmw-agent-api:8000/offers/extract",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: $json.text,\n  campaign_id: \"campaign-001\",\n  configuration_id: \"config-001\",\n  dealer_id: \"dealer-001\",\n  pdf_filename: $(\"Code in JavaScript\").item.json.pdf_filename\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        336,
+        -144
+      ],
+      "id": "48739673-c3de-4e37-930a-26d2ed5b9fb9",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "url": "http://bmw-agent-api:8000/health",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -32,
+        -368
+      ],
+      "id": "332d5c6b-0b2f-4c98-8937-21bddc8c1860",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        -368
+      ],
+      "id": "607c5a9c-09a7-4153-9e14-8deeefced3f7",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\n\nfor (const [key, file] of Object.entries(binary)) {\n  const isPdf =\n    file.mimeType === 'application/pdf' ||\n    file.fileExtension?.toLowerCase() === 'pdf' ||\n    file.fileName?.toLowerCase().endsWith('.pdf');\n\n  if (isPdf) {\n    return [\n      {\n        json: {\n          ...item.json,\n          pdf_binary_key: key,\n          pdf_filename: file.fileName ?? 'angebot.pdf',\n        },\n        binary: {\n          pdf: file,\n        },\n      },\n    ];\n  }\n}\n\nthrow new Error(\n  `Kein PDF-Anhang gefunden. Vorhandene Anhänge: ${Object.keys(binary).join(', ')}`\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        -144
+      ],
+      "id": "ebd90b6d-383a-4bf4-a113-bfb42207f056",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        []
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b383f4c3-d515-4df5-830c-e4b797e9e06d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "714159c99f6d4af47704c0991b7bfb8204d89abba492ec4d0871d42ad698bfde"
+  },
+  "nodeGroups": [],
+  "id": "LMRLBc0kPzdo5Aqo",
+  "tags": []
+}

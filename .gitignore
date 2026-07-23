@@ -2,3 +2,4 @@
 .venv/
 __pycache__/
 .pytest_cache/
+n8n/.DS_Store
