@@ -3,3 +3,7 @@
 __pycache__/
 .pytest_cache/
 n8n/.DS_Store
+
+data/*.db
+data/*.db-shm
+data/*.db-wal

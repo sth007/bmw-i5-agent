@@ -1,8 +1,12 @@
 from app.services.offer_extractor import OfferExtractor
 from app.domain.dealer_offer import DealerOffer
+from app.repositories.offer_repository import OfferRepository
 
 
 class OfferService:
+
+    def __init__(self):
+        self.repository = OfferRepository()
 
     def extract_offer(
         self,
@@ -18,7 +22,7 @@ class OfferService:
 
         extractor = OfferExtractor(text)
 
-        return extractor.extract(
+        offer = extractor.extract(
             campaign_id=campaign_id,
             configuration_id=configuration_id,
             dealer_id=dealer_id,
@@ -26,3 +30,7 @@ class OfferService:
             email_text=email_text,
             pdf_filename=pdf_filename,
         )
+
+        self.repository.save(offer)
+
+        return offer
