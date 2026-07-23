@@ -1,18 +1,21 @@
 services:
-
   n8n:
     image: n8nio/n8n:latest
     container_name: bmw-agent-n8n
-    restart: unless-stopped
-
     ports:
       - "5678:5678"
-
-    environment:
-      - TZ=Europe/Berlin
-
     volumes:
       - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+  bmw-agent-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bmw-agent-api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
 
 volumes:
   n8n_data:
