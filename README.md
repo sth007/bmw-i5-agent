@@ -37,11 +37,18 @@ Beispiel:
 {
   "campaign_name": "BMW i5 Touring Juli 2026",
   "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
-  "dealer_limit": 3
+  "dealer_limit": 3,
+  "customer": {
+    "name": "Max Mustermann",
+    "email": "max.mustermann@example.de",
+    "phone": "+49 170 1234567"
+  }
 }
 ```
 
 `dealer_limit` ist optional und hat standardmaessig den Wert `3`.
+
+Bei `POST /api/campaigns/from-config` ist `customer` erforderlich. Der Endpunkt erzeugt nur Vorschauen und versendet keine E-Mails.
 
 Diese Version:
 
@@ -49,7 +56,25 @@ Diese Version:
 - speichert `config_url`
 - extrahiert und speichert `config_id`
 - waehlt die ersten veroeffentlichten Haendler mit E-Mail
-- erzeugt E-Mail-Vorschauen
+- erzeugt E-Mail-Vorschauen auf Basis versionierter Jinja2-Templates
+- liest die BMW-Konfiguration noch nicht aus, sondern setzt nur den Link in das Template ein
+
+Falls keine geeigneten Haendler gefunden werden, wird die Kampagne trotzdem angelegt. Die Response enthaelt dann leere `dealers`- und `email_previews`-Arrays sowie eine Warnung.
+
+Beispiel fuer n8n:
+
+```json
+{
+  "campaign_name": "Neue BMW Kampagne",
+  "config_url": "{{$json.config_url}}",
+  "dealer_limit": 3,
+  "customer": {
+    "name": "Max Mustermann",
+    "email": "max.mustermann@example.de",
+    "phone": ""
+  }
+}
+```
 
 Noch nicht enthalten:
 

@@ -10,9 +10,14 @@ from app.entities.campaign import Campaign
 from app.entities.campaign_configuration import CampaignConfiguration
 from app.entities.configuration_requirement import ConfigurationRequirement
 from app.repositories.campaign_repository import CampaignRepository
-from app.schemas.campaign import CampaignCreate, CampaignStartResponse, CampaignStatusPatch
+from app.schemas.campaign import (
+    CampaignCreate,
+    CampaignCustomerInput,
+    CampaignStartResponse,
+    CampaignStatusPatch,
+)
 from app.services.dealer_selection_service import DealerSelectionService
-from app.services.email_preview_service import EmailPreviewService
+from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.feature_normalization_service import FeatureNormalizationService
 
 
@@ -59,6 +64,21 @@ class CampaignService:
         config_url: str,
         dealer_limit: int,
     ) -> CampaignStartResponse:
+        return self.create_from_config(
+            campaign_name=campaign_name,
+            config_url=config_url,
+            dealer_limit=dealer_limit,
+            customer=None,
+        )
+
+    def create_from_config(
+        self,
+        *,
+        campaign_name: str,
+        config_url: str,
+        dealer_limit: int,
+        customer: CampaignCustomerInput | None,
+    ) -> CampaignStartResponse:
         cleaned_name = campaign_name.strip()
         cleaned_config_url = config_url.strip()
         if not cleaned_name:
@@ -84,9 +104,34 @@ class CampaignService:
             raise
 
         dealer_selection_service = DealerSelectionService(self.repository.db)
-        dealers = dealer_selection_service.select_initial_dealers(dealer_limit)
-        email_preview_service = EmailPreviewService()
-        email_previews = email_preview_service.build_previews(dealers, cleaned_config_url)
+        dealers = dealer_selection_service.select_for_campaign(dealer_limit)
+
+        customer_name = DEFAULT_CUSTOMER_NAME
+        customer_email = None
+        customer_phone = None
+        if customer is not None:
+            customer_name = customer.name.strip()
+            customer_email = customer.email
+            customer_phone = customer.phone
+
+        email_template_service = EmailTemplateService()
+        email_previews = [
+            email_template_service.render_campaign_request(
+                dealer_id=dealer.id,
+                campaign_name=campaign.name,
+                config_url=cleaned_config_url,
+                dealer_name=dealer.name,
+                dealer_email=dealer.email or "",
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
+            )
+            for dealer in dealers
+            if dealer.email and dealer.email.strip()
+        ]
+        warnings: list[str] = []
+        if not dealers:
+            warnings.append("No eligible dealers with a valid email address were found.")
 
         return CampaignStartResponse(
             campaign_id=campaign.id,
@@ -106,12 +151,14 @@ class CampaignService:
             email_previews=[
                 {
                     "dealer_id": preview.dealer_id,
+                    "dealer_name": preview.dealer_name,
                     "to": preview.to,
                     "subject": preview.subject,
                     "body": preview.body,
                 }
                 for preview in email_previews
             ],
+            warnings=warnings,
         )
 
     def list_campaigns(self) -> list[Campaign]:

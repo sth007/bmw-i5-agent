@@ -1,0 +1,36 @@
+{% if dealer_name %}
+Sehr geehrte Damen und Herren des Autohauses {{ dealer_name }},
+{% else %}
+Sehr geehrte Damen und Herren,
+{% endif %}
+
+ich interessiere mich für den Kauf eines neuen BMW und bitte Sie um ein unverbindliches Angebot.
+
+Meine gewünschte Fahrzeugkonfiguration finden Sie unter folgendem BMW-Konfigurator-Link:
+
+{{ config_url }}
+
+Sollte der Link nicht funktionieren, lasse ich Ihnen die Konfiguration selbstverständlich gerne auch in einer anderen Form zukommen.
+
+Ich freue mich über Ihr Angebot mit folgenden Informationen:
+
+- Endpreis inklusive aller Rabatte
+- voraussichtlicher Liefertermin
+- Lieferzeit
+- Überführungs- und Zulassungskosten
+- Gültigkeitsdauer des Angebots
+- mögliche Aktions- oder Sonderkonditionen
+
+Falls ein kurzfristig verfügbares Lagerfahrzeug mit vergleichbarer Ausstattung vorhanden ist, freue ich mich ebenfalls über ein entsprechendes Angebot.
+
+Vielen Dank für Ihre Mühe. Ich freue mich auf Ihre Rückmeldung.
+
+Mit freundlichen Grüßen
+
+{{ customer_name }}
+{% if customer_email %}
+{{ customer_email }}
+{% endif %}
+{% if customer_phone %}
+{{ customer_phone }}
+{% endif %}

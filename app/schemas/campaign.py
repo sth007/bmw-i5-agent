@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class ConfigurationRequirementCreate(BaseModel):
@@ -42,6 +42,19 @@ class CampaignStartRequest(BaseModel):
     campaign_name: str = Field(min_length=1, max_length=200)
     config_url: str = Field(min_length=1)
     dealer_limit: int = Field(default=3, ge=1, le=100)
+
+
+class CampaignCustomerInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: EmailStr | None = None
+    phone: str | None = None
+
+
+class CampaignFromConfigRequest(BaseModel):
+    campaign_name: str = Field(min_length=1, max_length=200)
+    config_url: str = Field(min_length=1)
+    dealer_limit: int = Field(default=3, ge=1, le=100)
+    customer: CampaignCustomerInput
 
 
 class CampaignStatusPatch(BaseModel):
@@ -148,7 +161,8 @@ class CampaignStartDealerResponse(BaseModel):
 
 class CampaignEmailPreviewResponse(BaseModel):
     dealer_id: int
-    to: str
+    dealer_name: str | None
+    to: EmailStr
     subject: str
     body: str
 
@@ -161,6 +175,7 @@ class CampaignStartResponse(BaseModel):
     status: str
     dealers: list[CampaignStartDealerResponse]
     email_previews: list[CampaignEmailPreviewResponse]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DealerOfferFeatureResponse(BaseModel):

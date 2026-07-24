@@ -10,6 +10,7 @@ from app.database.session import get_db
 from app.schemas.campaign import (
     CampaignComparisonResponse,
     CampaignCreate,
+    CampaignFromConfigRequest,
     CampaignStartRequest,
     CampaignStartResponse,
     CampaignResponse,
@@ -128,19 +129,30 @@ def start_campaign(payload: CampaignStartRequest, db: DatabaseSession) -> Campai
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email template rendering failed.",
+        )
 
 
 @start_router.post("/from-config", response_model=CampaignStartResponse, status_code=status.HTTP_201_CREATED)
 def create_campaign_from_config(
-    payload: CampaignStartRequest,
+    payload: CampaignFromConfigRequest,
     db: DatabaseSession,
 ) -> CampaignStartResponse:
     service = CampaignService(db)
     try:
-        return service.start_campaign(
+        return service.create_from_config(
             campaign_name=payload.campaign_name,
             config_url=payload.config_url,
             dealer_limit=payload.dealer_limit,
+            customer=payload.customer,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email template rendering failed.",
+        )

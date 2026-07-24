@@ -12,3 +12,6 @@ class DealerSelectionService:
 
     def select_initial_dealers(self, dealer_limit: int) -> list[Dealer]:
         return self.repository.list_published_with_email(dealer_limit)
+
+    def select_for_campaign(self, dealer_limit: int) -> list[Dealer]:
+        return self.select_initial_dealers(dealer_limit)

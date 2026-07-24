@@ -42,6 +42,7 @@ def test_start_campaign_creates_draft_and_email_previews(client) -> None:
     assert len(payload["dealers"]) == 2
     assert [dealer["dealer_id"] for dealer in payload["dealers"]] == [1, 2]
     assert payload["email_previews"][0]["to"] == "bmw-stuttgart@bmw.de"
+    assert payload["email_previews"][0]["dealer_name"] == "BMW AG Niederlassung Stuttgart"
     assert payload["email_previews"][0]["subject"] == "Anfrage zu meiner BMW Wunschkonfiguration"
     assert "https://configure.bmw.de/de_DE/configid/chtwyiio" in payload["email_previews"][0]["body"]
 
@@ -87,6 +88,11 @@ def test_campaign_from_config_uses_default_dealer_limit(client) -> None:
         json={
             "campaign_name": "BMW i5 Touring Juli 2026",
             "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            "customer": {
+                "name": "Max Mustermann",
+                "email": "max.mustermann@example.de",
+                "phone": "+49 170 1234567",
+            },
         },
     )
 
@@ -95,6 +101,9 @@ def test_campaign_from_config_uses_default_dealer_limit(client) -> None:
     assert payload["config_id"] == "chtwyiio"
     assert len(payload["dealers"]) == 3
     assert len(payload["email_previews"]) == 3
+    assert payload["dealers"][0]["email"] == payload["email_previews"][0]["to"]
+    assert "Max Mustermann" in payload["email_previews"][0]["body"]
+    assert payload["warnings"] == []
 
 
 def test_campaign_from_config_rejects_invalid_bmw_url(client) -> None:
@@ -103,8 +112,85 @@ def test_campaign_from_config_rejects_invalid_bmw_url(client) -> None:
         json={
             "campaign_name": "BMW i5 Touring Juli 2026",
             "config_url": "https://example.com/configid/chtwyiio",
+            "customer": {
+                "name": "Max Mustermann",
+                "email": "max.mustermann@example.de",
+            },
         },
     )
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid BMW configuration URL."}
+
+
+def test_campaign_from_config_rejects_invalid_customer_email(client) -> None:
+    response = client.post(
+        "/api/campaigns/from-config",
+        json={
+            "campaign_name": "BMW i5 Touring Juli 2026",
+            "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            "customer": {
+                "name": "Max Mustermann",
+                "email": "not-an-email",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_campaign_from_config_rejects_blank_customer_name(client) -> None:
+    response = client.post(
+        "/api/campaigns/from-config",
+        json={
+            "campaign_name": "BMW i5 Touring Juli 2026",
+            "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            "customer": {
+                "name": "",
+                "email": "max.mustermann@example.de",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_campaign_from_config_returns_warning_when_no_eligible_dealers_exist(client) -> None:
+    dealer_import_response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-from-config-001",
+                "name": "Dealer 1",
+                "city": "Stuttgart",
+                "email": "dealer1@example.com",
+                "is_published": False,
+            },
+            {
+                "bmw_dealer_id": "bmw-from-config-002",
+                "name": "Dealer 2",
+                "city": "Muenchen",
+                "email": "dealer2@example.com",
+                "is_published": False,
+            },
+        ],
+    )
+    assert dealer_import_response.status_code == 200
+
+    response = client.post(
+        "/api/campaigns/from-config",
+        json={
+            "campaign_name": "BMW i5 Touring Juli 2026",
+            "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            "customer": {
+                "name": "Max Mustermann",
+                "email": "max.mustermann@example.de",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["dealers"] == []
+    assert payload["email_previews"] == []
+    assert payload["warnings"] == ["No eligible dealers with a valid email address were found."]
