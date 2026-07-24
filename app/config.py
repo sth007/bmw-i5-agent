@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
 
 
 @dataclass(frozen=True)
 class Settings:
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    preferences_path: Path = DATA_DIR / "preferences.json"
-    offers_path: Path = DATA_DIR / "offers.json"
+    app_name: str = "BMW Agent"
+    app_version: str = "1.0.0"
+    database_url: str = os.getenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://bmw_agent:bmw_agent@localhost:5432/bmw_agent_app",
+    )
 
 
 settings = Settings()
