@@ -101,3 +101,16 @@ class DealerResponse(BaseModel):
     last_sync: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class DealerCountResponse(BaseModel):
+    dealer_count: int
+
+
+class DealerStatisticsResponse(BaseModel):
+    dealer_count: int
+    active_dealer_count: int
+    inactive_dealer_count: int
+    distinct_city_count: int
+    duplicate_bmw_dealer_id_count: int
+    invalid_record_count: int

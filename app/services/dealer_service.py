@@ -18,6 +18,23 @@ class DealerService:
     def get_dealer(self, dealer_id: int) -> Dealer | None:
         return self.repository.get_by_id(dealer_id)
 
+    def get_dealer_count(self) -> int:
+        return self.repository.count()
+
+    def get_dealer_statistics(self) -> dict[str, int]:
+        dealer_count = self.repository.count()
+        active_dealer_count = self.repository.active_count()
+        duplicate_bmw_dealer_id_count = self.repository.duplicate_bmw_id_count()
+        invalid_record_count = self.repository.invalid_count()
+        return {
+            "dealer_count": dealer_count,
+            "active_dealer_count": active_dealer_count,
+            "inactive_dealer_count": max(0, dealer_count - active_dealer_count),
+            "distinct_city_count": self.repository.distinct_city_count(),
+            "duplicate_bmw_dealer_id_count": duplicate_bmw_dealer_id_count,
+            "invalid_record_count": invalid_record_count,
+        }
+
     def create_dealer(
         self,
         name: str,

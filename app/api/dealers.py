@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
-from app.schemas.dealer import DealerCreate, DealerImport, DealerResponse, DealerUpdate
+from app.schemas.dealer import (
+    DealerCountResponse,
+    DealerCreate,
+    DealerImport,
+    DealerResponse,
+    DealerStatisticsResponse,
+    DealerUpdate,
+)
 from app.services.dealer_service import DealerService
 
 
@@ -60,6 +67,32 @@ def get_dealers(
 ) -> list[DealerResponse]:
     service = DealerService(db)
     return service.get_all_dealers()
+
+
+@router.get(
+    "/count",
+    response_model=DealerCountResponse,
+)
+def get_dealer_count(
+    db: Session = Depends(get_db),
+) -> DealerCountResponse:
+    service = DealerService(db)
+    return DealerCountResponse(
+        dealer_count=service.get_dealer_count()
+    )
+
+
+@router.get(
+    "/statistics",
+    response_model=DealerStatisticsResponse,
+)
+def get_dealer_statistics(
+    db: Session = Depends(get_db),
+) -> DealerStatisticsResponse:
+    service = DealerService(db)
+    return DealerStatisticsResponse(
+        **service.get_dealer_statistics()
+    )
 
 
 @router.get(

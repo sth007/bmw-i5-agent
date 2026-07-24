@@ -84,3 +84,40 @@ def test_dealer_import_updates_existing_dealer(client) -> None:
     assert dealer["name"] == "Autohaus Sued Update"
     assert dealer["city"] == "Koeln"
     assert dealer["is_published"] is False
+
+
+def test_dealer_count_and_statistics_endpoints(client) -> None:
+    payload = [
+        {
+            "bmw_dealer_id": "bmw-3001",
+            "name": "Autohaus West",
+            "city": "Duesseldorf",
+            "email": "west@example.com",
+            "phone": "+49-211-111111",
+            "is_published": True,
+        },
+        {
+            "bmw_dealer_id": "bmw-3002",
+            "name": "Autohaus Ost",
+            "city": "Leipzig",
+            "is_published": False,
+        },
+    ]
+
+    import_response = client.post("/dealers/import", json=payload)
+    assert import_response.status_code == 200
+
+    count_response = client.get("/dealers/count")
+    assert count_response.status_code == 200
+    assert count_response.json() == {"dealer_count": 2}
+
+    statistics_response = client.get("/dealers/statistics")
+    assert statistics_response.status_code == 200
+    assert statistics_response.json() == {
+        "dealer_count": 2,
+        "active_dealer_count": 1,
+        "inactive_dealer_count": 1,
+        "distinct_city_count": 2,
+        "duplicate_bmw_dealer_id_count": 0,
+        "invalid_record_count": 1,
+    }

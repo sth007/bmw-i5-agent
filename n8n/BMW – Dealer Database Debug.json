@@ -1,0 +1,265 @@
+{
+  "name": "BMW – Dealer Database Debug",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -120
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0001",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS dealer_count\nFROM public.dealer;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        -360
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0002",
+      "name": "Dealer Count",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    id,\n    bmw_dealer_id,\n    name,\n    city,\n    email,\n    phone,\n    is_published,\n    last_sync,\n    created_at,\n    updated_at\nFROM public.dealer\nORDER BY updated_at DESC NULLS LAST,\n         created_at DESC NULLS LAST,\n         id DESC\nLIMIT 20;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        -240
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0003",
+      "name": "Latest Dealers",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(DISTINCT city) AS distinct_city_count\nFROM public.dealer\nWHERE city IS NOT NULL\n  AND BTRIM(city) <> '';"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        -120
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0004",
+      "name": "Distinct Cities",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS active_dealer_count\nFROM public.dealer\nWHERE is_published = TRUE;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        0
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0005",
+      "name": "Active Dealers",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS duplicate_bmw_dealer_id_groups\nFROM (\n    SELECT bmw_dealer_id\n    FROM public.dealer\n    GROUP BY bmw_dealer_id\n    HAVING COUNT(*) > 1\n) AS duplicate_groups;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        120
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0006",
+      "name": "Duplicate BMW IDs",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS invalid_record_count\nFROM public.dealer\nWHERE name IS NULL\n   OR BTRIM(name) = ''\n   OR city IS NULL\n   OR BTRIM(city) = ''\n   OR bmw_dealer_id IS NULL\n   OR BTRIM(bmw_dealer_id) = ''\n   OR (\n       (email IS NULL OR BTRIM(email) = '')\n       AND (phone IS NULL OR BTRIM(phone) = '')\n   );"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -500,
+        240
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0007",
+      "name": "Invalid Records",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "BMW Agent Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    dealer_count: $items('Dealer Count')[0].json.dealer_count,\n    distinct_city_count: $items('Distinct Cities')[0].json.distinct_city_count,\n    active_dealer_count: $items('Active Dealers')[0].json.active_dealer_count,\n    duplicate_bmw_dealer_id_groups: $items('Duplicate BMW IDs')[0].json.duplicate_bmw_dealer_id_groups,\n    invalid_record_count: $items('Invalid Records')[0].json.invalid_record_count,\n    latest_20_dealers: $items('Latest Dealers').map((item) => item.json)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        -60
+      ],
+      "id": "b969ab95-0f64-43d8-b5d1-6c80c4bd0008",
+      "name": "Build Debug Summary"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Dealer Count",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Latest Dealers",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Distinct Cities",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Active Dealers",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Duplicate BMW IDs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Invalid Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dealer Count": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Latest Dealers": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Distinct Cities": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Active Dealers": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate BMW IDs": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Records": {
+      "main": [
+        [
+          {
+            "node": "Build Debug Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "d8ca2e33-cf1e-42e5-a875-3e7e1a710001",
+  "meta": {
+    "instanceId": "dealer-database-debug-workflow"
+  },
+  "id": "dealerDatabaseDebugWorkflow",
+  "tags": []
+}
