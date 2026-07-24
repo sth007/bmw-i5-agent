@@ -1,12 +1,8 @@
 from app.services.offer_extractor import OfferExtractor
 from app.domain.dealer_offer import DealerOffer
-from app.repositories.dealer_offer_repository import DealerOfferRepository
 
 
 class OfferService:
-
-    def __init__(self):
-        self.repository = DealerOfferRepository()
 
     def extract_offer(
         self,
@@ -30,7 +26,4 @@ class OfferService:
             email_text=email_text,
             pdf_filename=pdf_filename,
         )
-
-        self.repository.save(offer)
-
         return offer

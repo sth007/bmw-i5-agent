@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
-from app.schemas.dealer import DealerCreate, DealerImport, DealerResponse
+from app.schemas.dealer import DealerCreate, DealerImport, DealerResponse, DealerUpdate
 from app.services.dealer_service import DealerService
 
 
@@ -26,6 +26,7 @@ def create_dealer(
     try:
         dealer = service.create_dealer(
             name=payload.name,
+            bmw_dealer_id=payload.bmw_dealer_id,
             email=str(payload.email) if payload.email else None,
             phone=payload.phone,
             city=payload.city,
@@ -37,6 +38,7 @@ def create_dealer(
         ) from exc
 
     return dealer
+
 
 @router.post(
     "/import",
@@ -78,3 +80,44 @@ def get_dealer(
         )
 
     return dealer
+
+
+@router.patch(
+    "/{dealer_id}",
+    response_model=DealerResponse,
+)
+def patch_dealer(
+    dealer_id: int,
+    payload: DealerUpdate,
+    db: Session = Depends(get_db),
+) -> DealerResponse:
+    service = DealerService(db)
+    dealer = service.update_dealer(dealer_id, payload)
+
+    if dealer is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Händler wurde nicht gefunden.",
+        )
+
+    return dealer
+
+
+@router.delete(
+    "/{dealer_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_dealer(
+    dealer_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    service = DealerService(db)
+    deleted = service.delete_dealer(dealer_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Händler wurde nicht gefunden.",
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

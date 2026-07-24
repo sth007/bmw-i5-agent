@@ -1,0 +1,24 @@
+[
+  {
+    "bmw_dealer_id": "bmw-1001",
+    "distribution_partner_id": "dp-10",
+    "outlet_id": "outlet-10",
+    "name": "Autohaus Nord",
+    "street": "Beispielweg 1",
+    "postal_code": "10115",
+    "city": "Berlin",
+    "country": "DE",
+    "latitude": 52.53,
+    "longitude": 13.38,
+    "homepage": "https://dealer.example.com",
+    "email": "info@dealer.example.com",
+    "phone": "+49-30-123456",
+    "new_car_email": "neuwagen@dealer.example.com",
+    "new_car_phone": "+49-30-123450",
+    "used_car_email": "gebraucht@dealer.example.com",
+    "used_car_phone": "+49-30-123451",
+    "new_car_sales": true,
+    "used_car_sales": true,
+    "is_published": true
+  }
+]

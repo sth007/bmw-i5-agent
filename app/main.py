@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
 from app.api.campaigns import router as campaigns_router
+from app.api.dealers import router as dealers_router
+from app.api.offers import router as offers_router
 from app.config import settings
 
 
@@ -9,6 +11,8 @@ app = FastAPI(
     version=settings.app_version,
 )
 
+app.include_router(offers_router)
+app.include_router(dealers_router)
 app.include_router(campaigns_router)
 
 

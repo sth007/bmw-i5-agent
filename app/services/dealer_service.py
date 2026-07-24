@@ -1,9 +1,11 @@
+from datetime import datetime
+from uuid import uuid4
+
 from sqlalchemy.orm import Session
 
 from app.entities.dealer import Dealer
 from app.repositories.dealer_repository import DealerRepository
-from app.schemas.dealer import DealerImport
-from datetime import datetime
+from app.schemas.dealer import DealerImport, DealerUpdate
 
 
 class DealerService:
@@ -19,6 +21,7 @@ class DealerService:
     def create_dealer(
         self,
         name: str,
+        bmw_dealer_id: str | None = None,
         email: str | None = None,
         phone: str | None = None,
         city: str | None = None,
@@ -28,7 +31,10 @@ class DealerService:
         if not name:
             raise ValueError("Der Händlername darf nicht leer sein.")
 
+        dealer_identifier = (bmw_dealer_id or "").strip() or f"manual-{uuid4().hex[:12]}"
+
         dealer = Dealer(
+            bmw_dealer_id=dealer_identifier,
             name=name,
             email=email.strip() if email else None,
             phone=phone.strip() if phone else None,
@@ -40,6 +46,40 @@ class DealerService:
         self.repository.refresh(dealer)
 
         return dealer
+
+    def update_dealer(
+        self,
+        dealer_id: int,
+        payload: DealerUpdate,
+    ) -> Dealer | None:
+        dealer = self.repository.get_by_id(dealer_id)
+        if dealer is None:
+            return None
+
+        updates = payload.model_dump(exclude_unset=True)
+        for field_name, value in updates.items():
+            if isinstance(value, str):
+                value = value.strip() or None
+            if field_name == "email" and value is not None:
+                value = str(value)
+            if field_name == "new_car_email" and value is not None:
+                value = str(value)
+            if field_name == "used_car_email" and value is not None:
+                value = str(value)
+            setattr(dealer, field_name, value)
+
+        self.repository.commit()
+        self.repository.refresh(dealer)
+        return dealer
+
+    def delete_dealer(self, dealer_id: int) -> bool:
+        dealer = self.repository.get_by_id(dealer_id)
+        if dealer is None:
+            return False
+
+        self.repository.delete(dealer)
+        self.repository.commit()
+        return True
 
     def import_dealers(
     self,
@@ -121,6 +161,7 @@ class DealerService:
     
                     existing.new_car_sales = item.new_car_sales
                     existing.used_car_sales = item.used_car_sales
+                    existing.is_published = item.is_published
     
                     existing.last_sync = datetime.utcnow()
     

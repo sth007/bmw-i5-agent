@@ -31,6 +31,9 @@ class DealerRepository:
             .all()
         )
 
+    def delete(self, dealer: Dealer) -> None:
+        self.db.delete(dealer)
+
     def add(self, dealer: Dealer) -> Dealer:
         self.db.add(dealer)
         self.db.flush()
