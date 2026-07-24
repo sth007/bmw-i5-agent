@@ -126,3 +126,22 @@ def test_start_campaign_returns_warning_when_no_eligible_dealers_exist(db_sessio
     assert response.dealers == []
     assert response.email_previews == []
     assert response.warnings == ["No eligible dealers with a valid email address were found."]
+
+
+def test_dealer_selection_returns_three_dealers_from_large_dataset(db_session) -> None:
+    dealers = [
+        Dealer(
+            bmw_dealer_id=f"dealer-{index:03d}",
+            name=f"Dealer {index}",
+            email=f"dealer{index}@example.com",
+            is_published=True,
+        )
+        for index in range(1, 160)
+    ]
+    db_session.add_all(dealers)
+    db_session.commit()
+
+    selected = DealerSelectionService(db_session).select_for_campaign(3)
+
+    assert len(selected) == 3
+    assert [dealer.id for dealer in selected] == [1, 2, 3]

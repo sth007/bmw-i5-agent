@@ -5,16 +5,22 @@ from app.database.session import get_db
 from app.schemas.dealer import (
     DealerCountResponse,
     DealerCreate,
+    DealerDebugSelectionResponse,
     DealerImport,
     DealerResponse,
     DealerStatisticsResponse,
     DealerUpdate,
 )
+from app.services.dealer_selection_service import DealerSelectionService
 from app.services.dealer_service import DealerService
 
 
 router = APIRouter(
     prefix="/dealers",
+    tags=["dealers"],
+)
+debug_router = APIRouter(
+    prefix="/api/dealers",
     tags=["dealers"],
 )
 
@@ -92,6 +98,20 @@ def get_dealer_statistics(
     service = DealerService(db)
     return DealerStatisticsResponse(
         **service.get_dealer_statistics()
+    )
+
+
+@debug_router.get(
+    "/debug-selection",
+    response_model=DealerDebugSelectionResponse,
+)
+def get_debug_selection(
+    limit: int = 3,
+    db: Session = Depends(get_db),
+) -> DealerDebugSelectionResponse:
+    service = DealerSelectionService(db)
+    return DealerDebugSelectionResponse(
+        **service.debug_selection(limit)
     )
 
 

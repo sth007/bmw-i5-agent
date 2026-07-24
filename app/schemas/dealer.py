@@ -114,3 +114,26 @@ class DealerStatisticsResponse(BaseModel):
     distinct_city_count: int
     duplicate_bmw_dealer_id_count: int
     invalid_record_count: int
+
+
+class DealerDebugSelectionSampleResponse(BaseModel):
+    id: int
+    name: str
+    email: EmailStr | None
+    new_car_email: EmailStr | None = None
+    used_car_email: EmailStr | None = None
+    is_published: bool
+
+
+class DealerDebugSelectionResponse(BaseModel):
+    table_exists: bool
+    database_name: str | None
+    total_dealers: int
+    published_dealers: int
+    dealers_with_email: int
+    eligible_dealers: int
+    selected_dealers: int
+    dealers_with_any_contact_email: int
+    selection_sql: str
+    sample: list[DealerDebugSelectionSampleResponse]
+    warnings: list[str]

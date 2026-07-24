@@ -1,4 +1,4 @@
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app.entities.dealer import Dealer
@@ -34,13 +34,25 @@ class DealerRepository:
 
     def list_published_with_email(self, limit: int) -> list[Dealer]:
         return (
-            self.db.query(Dealer)
-            .filter(Dealer.is_published.is_(True))
-            .filter(Dealer.email.is_not(None))
-            .filter(func.length(func.trim(Dealer.email)) > 0)
+            self._published_with_email_query()
             .order_by(Dealer.id.asc())
             .limit(limit)
             .all()
+        )
+
+    def published_with_email_count(self) -> int:
+        return int(
+            self._published_with_email_query()
+            .count()
+            or 0
+        )
+
+    def published_count(self) -> int:
+        return int(
+            self.db.query(func.count(Dealer.id))
+            .filter(Dealer.is_published.is_(True))
+            .scalar()
+            or 0
         )
 
     def count(self) -> int:
@@ -116,3 +128,83 @@ class DealerRepository:
     def refresh(self, dealer: Dealer) -> Dealer:
         self.db.refresh(dealer)
         return dealer
+
+    def debug_selection_snapshot(self, limit: int) -> dict[str, object]:
+        table_exists = inspect(self.db.bind).has_table(Dealer.__tablename__) if self.db.bind else False
+        database_name = self.db.execute(text("SELECT current_database()")).scalar_one_or_none()
+
+        if not table_exists:
+            return {
+                "table_exists": False,
+                "database_name": database_name,
+                "total_dealers": 0,
+                "published_dealers": 0,
+                "dealers_with_email": 0,
+                "eligible_dealers": 0,
+                "selected_dealers": 0,
+                "dealers_with_any_contact_email": 0,
+                "selection_sql": "Dealer table does not exist.",
+                "sample": [],
+                "warnings": [
+                    "Dealer table 'dealer' does not exist in the current database. Run Alembic migrations and verify the API points to the expected PostgreSQL database."
+                ],
+            }
+
+        selected_query = self._published_with_email_query().order_by(Dealer.id.asc()).limit(limit)
+        selected_dealers = selected_query.all()
+
+        published_with_any_email = int(
+            self.db.query(func.count(Dealer.id))
+            .filter(Dealer.is_published.is_(True))
+            .filter(
+                or_(
+                    and_(Dealer.email.is_not(None), func.length(func.trim(Dealer.email)) > 0),
+                    and_(Dealer.new_car_email.is_not(None), func.length(func.trim(Dealer.new_car_email)) > 0),
+                    and_(Dealer.used_car_email.is_not(None), func.length(func.trim(Dealer.used_car_email)) > 0),
+                )
+            )
+            .scalar()
+            or 0
+        )
+
+        primary_email_count = int(
+            self.db.query(func.count(Dealer.id))
+            .filter(Dealer.email.is_not(None))
+            .filter(func.length(func.trim(Dealer.email)) > 0)
+            .scalar()
+            or 0
+        )
+
+        return {
+            "table_exists": True,
+            "database_name": database_name,
+            "total_dealers": self.count(),
+            "published_dealers": self.published_count(),
+            "dealers_with_email": primary_email_count,
+            "eligible_dealers": self.published_with_email_count(),
+            "selected_dealers": len(selected_dealers),
+            "dealers_with_any_contact_email": published_with_any_email,
+            "selection_sql": str(
+                selected_query.statement.compile(compile_kwargs={"literal_binds": True})
+            ),
+            "sample": [
+                {
+                    "id": dealer.id,
+                    "name": dealer.name,
+                    "email": dealer.email,
+                    "new_car_email": dealer.new_car_email,
+                    "used_car_email": dealer.used_car_email,
+                    "is_published": dealer.is_published,
+                }
+                for dealer in selected_dealers[: min(5, limit)]
+            ],
+            "warnings": [],
+        }
+
+    def _published_with_email_query(self):
+        return (
+            self.db.query(Dealer)
+            .filter(Dealer.is_published.is_(True))
+            .filter(Dealer.email.is_not(None))
+            .filter(func.length(func.trim(Dealer.email)) > 0)
+        )

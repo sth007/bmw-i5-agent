@@ -121,3 +121,44 @@ def test_dealer_count_and_statistics_endpoints(client) -> None:
         "duplicate_bmw_dealer_id_count": 0,
         "invalid_record_count": 1,
     }
+
+
+def test_debug_selection_endpoint_returns_counts_and_sample(client) -> None:
+    payload = [
+        {
+            "bmw_dealer_id": "bmw-debug-001",
+            "name": "Autohaus West",
+            "city": "Duesseldorf",
+            "email": "west@example.com",
+            "is_published": True,
+        },
+        {
+            "bmw_dealer_id": "bmw-debug-002",
+            "name": "Autohaus Ost",
+            "city": "Leipzig",
+            "email": "ost@example.com",
+            "is_published": True,
+        },
+        {
+            "bmw_dealer_id": "bmw-debug-003",
+            "name": "Autohaus Nord",
+            "city": "Hamburg",
+            "is_published": True,
+        },
+    ]
+
+    import_response = client.post("/dealers/import", json=payload)
+    assert import_response.status_code == 200
+
+    response = client.get("/api/dealers/debug-selection?limit=2")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total_dealers"] == 3
+    assert data["published_dealers"] == 3
+    assert data["dealers_with_email"] == 2
+    assert data["eligible_dealers"] == 2
+    assert data["selected_dealers"] == 2
+    assert len(data["sample"]) == 2
+    assert data["sample"][0]["email"] == "west@example.com"
+    assert "FROM dealer" in data["selection_sql"]
