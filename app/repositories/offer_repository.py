@@ -5,6 +5,7 @@ from app.entities.offer import Offer
 
 
 class OfferRepository:
+    """Repository für öffentlich gefundene Fahrzeugangebote."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -17,25 +18,27 @@ class OfferRepository:
         source: str,
         external_id: str,
     ) -> Offer | None:
-
-        stmt = (
-            select(Offer)
-            .where(Offer.source == source)
-            .where(Offer.external_id == external_id)
+        statement = select(Offer).where(
+            Offer.source == source,
+            Offer.external_id == external_id,
         )
 
-        return self.db.execute(stmt).scalar_one_or_none()
+        return self.db.execute(
+            statement
+        ).scalar_one_or_none()
 
-    def get_all(self) -> list[Offer]:
-        stmt = (
-            select(Offer)
-            .order_by(Offer.id)
+    def list_all(self) -> list[Offer]:
+        statement = select(Offer).order_by(
+            Offer.id,
         )
 
-        return list(self.db.scalars(stmt))
+        return list(
+            self.db.scalars(statement)
+        )
 
-    def add(self, offer: Offer) -> None:
+    def add(self, offer: Offer) -> Offer:
         self.db.add(offer)
+        return offer
 
     def flush(self) -> None:
         self.db.flush()

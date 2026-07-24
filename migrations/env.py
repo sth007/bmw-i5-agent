@@ -18,6 +18,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
+from app.entities.price_history import PriceHistory  # noqa: F401
 from app.database.base import Base
 from app.entities.dealer import Dealer
 from app.entities.offer import Offer
