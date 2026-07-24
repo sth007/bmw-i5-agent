@@ -159,6 +159,7 @@ def test_debug_selection_endpoint_returns_counts_and_sample(client) -> None:
     assert data["dealers_with_email"] == 2
     assert data["eligible_dealers"] == 2
     assert data["selected_dealers"] == 2
+    assert data["suspicious_test_dealers"] == 2
     assert len(data["sample"]) == 2
     assert data["sample"][0]["email"] == "west@example.com"
     assert "FROM dealer" in data["selection_sql"]

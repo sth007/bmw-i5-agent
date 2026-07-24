@@ -2,6 +2,7 @@ from app.entities.dealer import Dealer
 from app.services.campaign_service import CampaignService
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
+from app.schemas.campaign import CampaignCustomerInput
 
 
 def test_extract_config_id_from_bmw_config_url(db_session) -> None:
@@ -145,3 +146,30 @@ def test_dealer_selection_returns_three_dealers_from_large_dataset(db_session) -
 
     assert len(selected) == 3
     assert [dealer.id for dealer in selected] == [1, 2, 3]
+
+
+def test_campaign_service_uses_exact_repository_selection(db_session) -> None:
+    dealers = [
+        Dealer(
+            bmw_dealer_id=f"bmw-real-{index:03d}",
+            name=f"BMW Niederlassung {index}",
+            city=f"City {index}",
+            email=f"haendler{index}@bmw.de",
+            is_published=True,
+        )
+        for index in range(1, 5)
+    ]
+    db_session.add_all(dealers)
+    db_session.commit()
+
+    dealer_selection_service = DealerSelectionService(db_session)
+    selected = dealer_selection_service.select_for_campaign(3)
+
+    response = CampaignService(db_session).create_from_config(
+        campaign_name="BMW i5 Touring Juli 2026",
+        config_url="https://configure.bmw.de/de_DE/configid/chtwyiio",
+        dealer_limit=3,
+        customer=CampaignCustomerInput(name="Max Mustermann"),
+    )
+
+    assert [dealer.dealer_id for dealer in response.dealers] == [dealer.id for dealer in selected]

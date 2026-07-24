@@ -134,6 +134,7 @@ class DealerDebugSelectionResponse(BaseModel):
     eligible_dealers: int
     selected_dealers: int
     dealers_with_any_contact_email: int
+    suspicious_test_dealers: int
     selection_sql: str
     sample: list[DealerDebugSelectionSampleResponse]
     warnings: list[str]

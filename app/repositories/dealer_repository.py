@@ -143,6 +143,7 @@ class DealerRepository:
                 "eligible_dealers": 0,
                 "selected_dealers": 0,
                 "dealers_with_any_contact_email": 0,
+                "suspicious_test_dealers": 0,
                 "selection_sql": "Dealer table does not exist.",
                 "sample": [],
                 "warnings": [
@@ -174,6 +175,27 @@ class DealerRepository:
             .scalar()
             or 0
         )
+        suspicious_test_dealers = int(
+            self.db.query(func.count(Dealer.id))
+            .filter(
+                or_(
+                    Dealer.email.ilike("%@example.com"),
+                    Dealer.name.op("~")(r"^Dealer [0-9]+$"),
+                    and_(
+                        Dealer.bmw_dealer_id.is_(None),
+                        Dealer.email.is_not(None),
+                        Dealer.email.ilike("%@example.com"),
+                    ),
+                )
+            )
+            .scalar()
+            or 0
+        )
+        warnings: list[str] = []
+        if suspicious_test_dealers:
+            warnings.append(
+                "Suspicious test dealers were found in the current database. Campaign selection may return dummy data until they are removed."
+            )
 
         return {
             "table_exists": True,
@@ -184,6 +206,7 @@ class DealerRepository:
             "eligible_dealers": self.published_with_email_count(),
             "selected_dealers": len(selected_dealers),
             "dealers_with_any_contact_email": published_with_any_email,
+            "suspicious_test_dealers": suspicious_test_dealers,
             "selection_sql": str(
                 selected_query.statement.compile(compile_kwargs={"literal_binds": True})
             ),
@@ -198,7 +221,7 @@ class DealerRepository:
                 }
                 for dealer in selected_dealers[: min(5, limit)]
             ],
-            "warnings": [],
+            "warnings": warnings,
         }
 
     def _published_with_email_query(self):

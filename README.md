@@ -12,6 +12,19 @@ docker exec bmw-agent-api pytest
 
 Die API ist danach unter `http://localhost:8000` erreichbar, n8n unter `http://localhost:5678`.
 
+## Testdatenbank
+
+Integrationstests duerfen nur gegen `TEST_DATABASE_URL` laufen. Ein Fallback auf `DATABASE_URL` ist absichtlich deaktiviert.
+
+Beispiel:
+
+```env
+DATABASE_URL=postgresql+psycopg://bmw_agent:password@postgres:5432/bmw_agent_app
+TEST_DATABASE_URL=postgresql+psycopg://bmw_agent:password@postgres:5432/bmw_agent_test
+```
+
+Wenn `TEST_DATABASE_URL` fehlt oder nicht auf eine Testdatenbank zeigt, bricht `pytest` mit einer klaren Fehlermeldung ab.
+
 ## Wichtige API-Endpunkte
 
 ### Dealer
