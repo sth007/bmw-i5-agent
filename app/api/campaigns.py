@@ -10,6 +10,8 @@ from app.database.session import get_db
 from app.schemas.campaign import (
     CampaignComparisonResponse,
     CampaignCreate,
+    CampaignStartRequest,
+    CampaignStartResponse,
     CampaignResponse,
     CampaignStatusPatch,
     CampaignSummaryResponse,
@@ -23,6 +25,7 @@ from app.services.dealer_offer_service import DealerOfferService, OfferExtractio
 
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+start_router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
@@ -112,3 +115,32 @@ def get_comparison(campaign_id: UUID, db: DatabaseSession) -> CampaignComparison
     if comparison is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
     return comparison
+
+
+@start_router.post("/start", response_model=CampaignStartResponse, status_code=status.HTTP_201_CREATED)
+def start_campaign(payload: CampaignStartRequest, db: DatabaseSession) -> CampaignStartResponse:
+    service = CampaignService(db)
+    try:
+        return service.start_campaign(
+            campaign_name=payload.campaign_name,
+            config_url=payload.config_url,
+            dealer_limit=payload.dealer_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@start_router.post("/from-config", response_model=CampaignStartResponse, status_code=status.HTTP_201_CREATED)
+def create_campaign_from_config(
+    payload: CampaignStartRequest,
+    db: DatabaseSession,
+) -> CampaignStartResponse:
+    service = CampaignService(db)
+    try:
+        return service.start_campaign(
+            campaign_name=payload.campaign_name,
+            config_url=payload.config_url,
+            dealer_limit=payload.dealer_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

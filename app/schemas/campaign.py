@@ -38,6 +38,12 @@ class CampaignCreate(BaseModel):
     configuration: CampaignConfigurationCreate
 
 
+class CampaignStartRequest(BaseModel):
+    campaign_name: str = Field(min_length=1, max_length=200)
+    config_url: str = Field(min_length=1)
+    dealer_limit: int = Field(default=3, ge=1, le=100)
+
+
 class CampaignStatusPatch(BaseModel):
     status: Literal["draft", "active", "paused", "completed", "cancelled"]
 
@@ -118,6 +124,8 @@ class CampaignSummaryResponse(BaseModel):
 
     id: UUID
     name: str
+    config_url: str | None
+    config_id: str | None
     status: str
     notes: str | None
     cheapest_exact_price: Decimal | None
@@ -128,7 +136,31 @@ class CampaignSummaryResponse(BaseModel):
 
 
 class CampaignResponse(CampaignSummaryResponse):
-    configuration: CampaignConfigurationResponse
+    configuration: CampaignConfigurationResponse | None
+
+
+class CampaignStartDealerResponse(BaseModel):
+    dealer_id: int
+    name: str
+    city: str | None
+    email: str
+
+
+class CampaignEmailPreviewResponse(BaseModel):
+    dealer_id: int
+    to: str
+    subject: str
+    body: str
+
+
+class CampaignStartResponse(BaseModel):
+    campaign_id: UUID
+    campaign_name: str
+    config_url: str
+    config_id: str
+    status: str
+    dealers: list[CampaignStartDealerResponse]
+    email_previews: list[CampaignEmailPreviewResponse]
 
 
 class DealerOfferFeatureResponse(BaseModel):

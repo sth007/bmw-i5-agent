@@ -1,84 +1,82 @@
 # BMW i5 Agent
 
-Python-Startpunkt fuer ein Agent-Projekt rund um den BMW i5.
+FastAPI-, PostgreSQL- und n8n-basiertes Projekt fuer BMW-Kampagnen, Haendlerimport, Angebotsverarbeitung und erste Kampagnenorchestrierung.
 
-Der aktuelle Stand des Repositories ist ein leichtes Projektgeruest mit Python-Abhaengigkeiten, aber noch ohne implementierte Anwendungslogik in `app/main.py`.
-
-## Projektstruktur
-
-```text
-.
-├── app/
-│   └── main.py
-├── data/
-├── docs/
-├── scripts/
-├── tests/
-└── requirements.txt
-```
-
-## Voraussetzungen
-
-- Python 3.11 oder neuer
-- `pip`
-- optional: virtuelles Environment mit `.venv`
-
-## Installation
+## Start
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+docker compose up -d --build
+docker exec bmw-agent-api alembic upgrade head
+docker exec bmw-agent-api pytest
 ```
 
-## Projekt starten
+Die API ist danach unter `http://localhost:8000` erreichbar, n8n unter `http://localhost:5678`.
 
-`app/main.py` ist aktuell leer. Sobald die Implementierung vorhanden ist, kann das Projekt voraussichtlich so gestartet werden:
+## Wichtige API-Endpunkte
 
-```bash
-python3 app/main.py
+### Dealer
+
+- `POST /dealers/import`
+- `GET /dealers`
+- `GET /dealers/{id}`
+- `PATCH /dealers/{id}`
+- `DELETE /dealers/{id}`
+- `GET /dealers/count`
+- `GET /dealers/statistics`
+
+### Campaign Start Workflow
+
+Erste Version des Kampagnenstarts:
+
+- `POST /api/campaigns/start`
+- `POST /api/campaigns/from-config`
+
+Beispiel:
+
+```json
+{
+  "campaign_name": "BMW i5 Touring Juli 2026",
+  "config_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+  "dealer_limit": 3
+}
 ```
 
-## Abhaengigkeiten
+`dealer_limit` ist optional und hat standardmaessig den Wert `3`.
 
-Die bisher eingetragenen Pakete deuten auf ein Python-Projekt mit OpenAI-API-Nutzung hin:
+Diese Version:
 
-- `openai`
-- `python-dotenv`
-- `httpx`
-- `pydantic`
-- `requests`
+- erzeugt eine Kampagne
+- speichert `config_url`
+- extrahiert und speichert `config_id`
+- waehlt die ersten veroeffentlichten Haendler mit E-Mail
+- erzeugt E-Mail-Vorschauen
 
-## Geplanter Aufbau
+Noch nicht enthalten:
 
-- `app/` enthaelt die eigentliche Anwendungslogik
-- `data/` ist fuer lokale Daten oder Beispielinputs vorgesehen
-- `docs/` kann technische Dokumentation aufnehmen
-- `scripts/` ist fuer Hilfsskripte gedacht
-- `tests/` ist fuer automatisierte Tests reserviert
+- automatisches Auslesen der BMW-Webseite
+- SMTP-Versand
+- PDF-Download
+- KI-Auswertung
 
-## Environment-Variablen
+## n8n
 
-Falls das Projekt spaeter mit der OpenAI-API arbeitet, ist typischerweise mindestens diese Variable noetig:
+n8n dient als Orchestrierung und Debug-Oberflaeche.
 
-```bash
-export OPENAI_API_KEY="..."
-```
+Vorhandene Workflows:
 
-Alternativ kann eine `.env`-Datei verwendet werden. Sie ist bereits in `.gitignore` ausgeschlossen.
+- `n8n/BMW – Incoming Dealer Offers.json`
+- `n8n/BMW – Dealer Database Debug.json`
 
-## Status
+Hinweise zur PostgreSQL-Debugging-Strecke:
 
-Stand 22. Juli 2026:
+- siehe [docs/debugging/dealer_database.md](docs/debugging/dealer_database.md)
 
-- Projektgeruest vorhanden
-- Python-Abhaengigkeiten definiert
-- keine implementierte Laufzeitlogik
-- keine Tests vorhanden
+## Tests
 
-## Naechste sinnvolle Schritte
+Die Test-Suite deckt unter anderem ab:
 
-1. Einstiegspunkt in `app/main.py` implementieren.
-2. Konfiguration ueber `.env` oder Settings-Modul definieren.
-3. Testbasis unter `tests/` anlegen.
-4. Dokumentation in `docs/` ergaenzen, sobald Use-Cases klar sind.
+- Dealer Import und Debug-Endpunkte
+- Kampagnenstart und Config-ID-Extraktion
+- Dealer-Auswahl und E-Mail-Preview
+- Angebotsvergleich und Ranking
+- Alembic Upgrade/Downgrade

@@ -1,6 +1,6 @@
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from app.config import settings
 
@@ -9,6 +9,9 @@ def test_alembic_upgrade_and_rollback() -> None:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", settings.database_url)
     engine = create_engine(settings.database_url, future=True)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
 
     command.upgrade(config, "head")
     inspector = inspect(engine)

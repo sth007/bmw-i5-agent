@@ -32,6 +32,17 @@ class DealerRepository:
             .all()
         )
 
+    def list_published_with_email(self, limit: int) -> list[Dealer]:
+        return (
+            self.db.query(Dealer)
+            .filter(Dealer.is_published.is_(True))
+            .filter(Dealer.email.is_not(None))
+            .filter(func.length(func.trim(Dealer.email)) > 0)
+            .order_by(Dealer.id.asc())
+            .limit(limit)
+            .all()
+        )
+
     def count(self) -> int:
         return int(
             self.db.query(func.count(Dealer.id)).scalar() or 0

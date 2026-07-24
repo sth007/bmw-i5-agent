@@ -21,6 +21,8 @@ class Campaign(Base):
         default=uuid4,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    config_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -53,7 +55,7 @@ class Campaign(Base):
         onupdate=sa.func.now(),
     )
 
-    configuration: Mapped["CampaignConfiguration"] = relationship(
+    configuration: Mapped["CampaignConfiguration | None"] = relationship(
         back_populates="campaign",
         uselist=False,
         cascade="all, delete-orphan",
