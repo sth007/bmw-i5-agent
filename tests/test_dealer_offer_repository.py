@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from app.domain.dealer_offer import DealerOffer
-from app.repositories.offer_repository import OfferRepository
+from app.repositories.dealer_offer_repository import DealerOfferRepository
 
 
 def create_offer(
@@ -35,7 +35,7 @@ def create_offer(
 
 
 def test_offer_can_be_saved_and_loaded(tmp_path):
-    repository = OfferRepository(
+    repository = DealerOfferRepository(
         tmp_path / "offers.db"
     )
 
@@ -53,7 +53,7 @@ def test_offer_can_be_saved_and_loaded(tmp_path):
 
 
 def test_unknown_offer_returns_none(tmp_path):
-    repository = OfferRepository(
+    repository = DealerOfferRepository(
         tmp_path / "offers.db"
     )
 
@@ -61,7 +61,7 @@ def test_unknown_offer_returns_none(tmp_path):
 
 
 def test_all_offers_can_be_listed(tmp_path):
-    repository = OfferRepository(
+    repository = DealerOfferRepository(
         tmp_path / "offers.db"
     )
 
@@ -81,7 +81,7 @@ def test_all_offers_can_be_listed(tmp_path):
 
 
 def test_offer_count(tmp_path):
-    repository = OfferRepository(
+    repository = DealerOfferRepository(
         tmp_path / "offers.db"
     )
 
@@ -94,7 +94,7 @@ def test_offer_count(tmp_path):
 
 
 def test_duplicate_offer_id_is_rejected(tmp_path):
-    repository = OfferRepository(
+    repository = DealerOfferRepository(
         tmp_path / "offers.db"
     )
 

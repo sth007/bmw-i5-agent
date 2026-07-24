@@ -28,7 +28,7 @@ def upgrade() -> None:
     sa.Column('phone', sa.String(length=50), nullable=True),
     sa.Column('city', sa.String(length=100), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
     )
     # ### end Alembic commands ###
 

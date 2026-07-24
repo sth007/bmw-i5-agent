@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Session
 
 from app.entities.dealer import Dealer
-from app.schemas.dealer import DealerImport
 
 
 class DealerRepository:
@@ -18,13 +17,10 @@ class DealerRepository:
     def get_by_bmw_id(
         self,
         bmw_dealer_id: str,
-        ) -> Dealer | None:
-
+    ) -> Dealer | None:
         return (
             self.db.query(Dealer)
-            .filter(
-                Dealer.bmw_dealer_id == bmw_dealer_id
-            )
+            .filter(Dealer.bmw_dealer_id == bmw_dealer_id)
             .first()
         )
 
@@ -35,8 +31,20 @@ class DealerRepository:
             .all()
         )
 
-    def create(self, dealer: Dealer) -> Dealer:
+    def add(self, dealer: Dealer) -> Dealer:
         self.db.add(dealer)
+        self.db.flush()
+        return dealer
+
+    def flush(self) -> None:
+        self.db.flush()
+
+    def commit(self) -> None:
         self.db.commit()
+
+    def rollback(self) -> None:
+        self.db.rollback()
+
+    def refresh(self, dealer: Dealer) -> Dealer:
         self.db.refresh(dealer)
         return dealer

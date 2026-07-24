@@ -20,6 +20,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 from app.database.base import Base
 from app.entities.dealer import Dealer
+from app.entities.offer import Offer
 
 target_metadata = Base.metadata
 

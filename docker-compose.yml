@@ -64,6 +64,10 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/bmw_agent_app
       TZ: ${TZ}
     volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
       - ./data/bmw-agent:/app/data
     networks:
       - bmw-agent-network

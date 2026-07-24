@@ -1,0 +1,1 @@
+from app.repositories.offer_repository import OfferRepository

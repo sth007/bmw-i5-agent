@@ -1,12 +1,12 @@
 from app.services.offer_extractor import OfferExtractor
 from app.domain.dealer_offer import DealerOffer
-from app.repositories.offer_repository import OfferRepository
+from app.repositories.dealer_offer_repository import DealerOfferRepository
 
 
 class OfferService:
 
     def __init__(self):
-        self.repository = OfferRepository()
+        self.repository = DealerOfferRepository()
 
     def extract_offer(
         self,
