@@ -250,3 +250,155 @@ class CampaignComparisonResponse(BaseModel):
     cheapest_exact_offer_id: UUID | None
     cheapest_alternative_offer_id: UUID | None
     cheapest_overall_offer_id: UUID | None
+
+
+class CampaignContactClaimRequest(BaseModel):
+    limit: int = Field(default=10, ge=1, le=100)
+    reservation_owner: str = Field(min_length=1, max_length=120)
+    test_mode: bool = False
+    test_recipient: EmailStr | None = None
+
+
+class CampaignContactClaimItemResponse(BaseModel):
+    contact_id: UUID
+    campaign_id: UUID
+    dealer_id: int
+    dealer_name: str
+    outbound_message_key: str
+    subject: str
+    body: str
+    effective_to: EmailStr
+    recipient_email: EmailStr | None
+    test_mode: bool
+    test_email: EmailStr | None = None
+
+
+class CampaignContactClaimResponse(BaseModel):
+    campaign_id: UUID
+    contacts: list[CampaignContactClaimItemResponse]
+
+
+class CampaignContactSentRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=32)
+    provider_message_id: str = Field(min_length=1, max_length=255)
+    provider_thread_id: str | None = Field(default=None, max_length=255)
+    internet_message_id: str | None = Field(default=None, max_length=255)
+    sent_to: EmailStr
+    test_mode: bool = False
+    n8n_execution_id: str | None = Field(default=None, max_length=120)
+
+
+class CampaignContactFailedRequest(BaseModel):
+    error_message: str = Field(min_length=1)
+    unknown_state: bool = False
+
+
+class CampaignContactStateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    campaign_id: UUID
+    dealer_id: int
+    status: str
+    reservation_owner: str | None
+    reserved_at: datetime | None
+    sent_at: datetime | None
+    replied_at: datetime | None
+    last_error: str | None
+    recipient_email: str | None
+    original_subject: str | None
+    outbound_message_key: str
+    provider: str | None
+    provider_message_id: str | None
+    provider_thread_id: str | None
+    internet_message_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InboundEmailCreateRequest(BaseModel):
+    mailbox_address: EmailStr
+    provider: str = Field(min_length=1, max_length=32)
+    provider_message_id: str = Field(min_length=1, max_length=255)
+    provider_thread_id: str | None = Field(default=None, max_length=255)
+    internet_message_id: str | None = Field(default=None, max_length=255)
+    in_reply_to: str | None = None
+    references: str | None = None
+    sender_email: str | None = Field(default=None, max_length=255)
+    sender_name: str | None = Field(default=None, max_length=255)
+    subject: str | None = None
+    text_body: str | None = None
+    html_body: str | None = None
+    received_at: datetime
+    raw_metadata: dict | None = None
+
+
+class InboundEmailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    campaign_id: UUID | None
+    dealer_id: int | None
+    campaign_dealer_contact_id: UUID | None
+    mailbox_address: str
+    provider: str
+    provider_message_id: str
+    provider_thread_id: str | None
+    internet_message_id: str | None
+    sender_email: str | None
+    subject: str | None
+    received_at: datetime
+    processing_status: str
+    matching_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class InboundOfferExtractionRequest(BaseModel):
+    attachment_text: list[str] = Field(default_factory=list)
+
+
+class InboundOfferExtractionResponse(BaseModel):
+    inbound_email_id: UUID
+    status: str
+    gross_final_price: Decimal | None
+    currency: str | None
+    price_confidence: Decimal | None
+    needs_review: bool
+    review_reason: str | None
+    dealer_offer_id: UUID | None
+
+
+class ReviewQueueItemResponse(BaseModel):
+    item_type: Literal["contact", "inbound_email"]
+    campaign_id: UUID | None
+    dealer_id: int | None
+    contact_id: UUID | None
+    inbound_email_id: UUID | None
+    dealer_offer_id: UUID | None
+    status: str
+    reason: str
+    subject: str | None
+    sender_email: str | None
+    created_at: datetime
+
+
+class DebugMatchCandidateResponse(BaseModel):
+    contact_id: UUID
+    dealer: str
+    status: str
+
+
+class InboundEmailDebugMatchResponse(BaseModel):
+    inbound_email_id: UUID
+    matching_status: str
+    campaign_id: UUID | None
+    dealer_id: int | None
+    campaign_dealer_contact_id: UUID | None
+    provider_thread_id: str | None
+    in_reply_to: str | None
+    references: str | None
+    subject: str | None
+    sender_email: str | None
+    checked: dict[str, bool]
+    candidate_contacts: list[DebugMatchCandidateResponse]

@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.schemas.campaign import (
     CampaignComparisonResponse,
+    CampaignContactClaimRequest,
+    CampaignContactClaimResponse,
+    CampaignContactFailedRequest,
+    CampaignContactSentRequest,
+    CampaignContactStateResponse,
     CampaignCreate,
     CampaignFromConfigRequest,
     CampaignStartRequest,
@@ -21,6 +26,7 @@ from app.schemas.campaign import (
     DealerOfferResponse,
 )
 from app.services.campaign_comparison_service import CampaignComparisonService
+from app.services.campaign_contact_service import CampaignContactService
 from app.services.campaign_service import CampaignService
 from app.services.dealer_offer_service import DealerOfferService, OfferExtractionService
 
@@ -156,3 +162,49 @@ def create_campaign_from_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Email template rendering failed.",
         )
+
+
+@start_router.post(
+    "/{campaign_id}/contacts/claim",
+    response_model=CampaignContactClaimResponse,
+    status_code=status.HTTP_200_OK,
+)
+def claim_campaign_contacts(
+    campaign_id: UUID,
+    payload: CampaignContactClaimRequest,
+    db: DatabaseSession,
+) -> CampaignContactClaimResponse:
+    service = CampaignContactService(db)
+    try:
+        return service.claim_contacts(campaign_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+contact_router = APIRouter(prefix="/api/campaign-contacts", tags=["campaigns"])
+
+
+@contact_router.post("/{contact_id}/sent", response_model=CampaignContactStateResponse)
+def mark_contact_sent(
+    contact_id: UUID,
+    payload: CampaignContactSentRequest,
+    db: DatabaseSession,
+) -> CampaignContactStateResponse:
+    service = CampaignContactService(db)
+    try:
+        return service.mark_sent(contact_id, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@contact_router.post("/{contact_id}/send-failed", response_model=CampaignContactStateResponse)
+def mark_contact_send_failed(
+    contact_id: UUID,
+    payload: CampaignContactFailedRequest,
+    db: DatabaseSession,
+) -> CampaignContactStateResponse:
+    service = CampaignContactService(db)
+    try:
+        return service.mark_send_failed(contact_id, payload.error_message, payload.unknown_state)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

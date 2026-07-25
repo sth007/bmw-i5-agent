@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,6 +25,18 @@ class DealerOffer(Base):
         PG_UUID(as_uuid=True),
         ForeignKey("campaign.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    dealer_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("dealer.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    inbound_email_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("inbound_email.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     dealer_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -56,6 +69,26 @@ class DealerOffer(Base):
     offer_valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     raw_response: Mapped[str] = mapped_column(Text, nullable=False)
     extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    gross_final_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True, index=True)
+    net_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    list_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    discount_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
+    delivery_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    other_costs: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    delivery_time_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    price_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    extraction_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="PARTIAL",
+        server_default="PARTIAL",
+        index=True,
+    )
+    missing_fields: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True)
+    extraction_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_extraction: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -69,6 +102,8 @@ class DealerOffer(Base):
     )
 
     campaign: Mapped["Campaign"] = relationship(back_populates="offers")
+    dealer: Mapped["Dealer | None"] = relationship(back_populates="dealer_offers")
+    inbound_email: Mapped["InboundEmail | None"] = relationship(back_populates="offers")
     features: Mapped[list["DealerOfferFeature"]] = relationship(
         back_populates="offer",
         cascade="all, delete-orphan",
@@ -77,4 +112,6 @@ class DealerOffer(Base):
 
 
 from app.entities.campaign import Campaign  # noqa: E402
+from app.entities.dealer import Dealer  # noqa: E402
 from app.entities.dealer_offer_feature import DealerOfferFeature  # noqa: E402
+from app.entities.inbound_email import InboundEmail  # noqa: E402

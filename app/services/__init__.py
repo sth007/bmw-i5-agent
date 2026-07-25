@@ -1,4 +1,5 @@
 from app.services.campaign_comparison_service import CampaignComparisonService
+from app.services.campaign_contact_service import CampaignContactService
 from app.services.campaign_offer_ranking_service import CampaignOfferRankingService
 from app.services.campaign_service import CampaignService
 from app.services.dealer_selection_service import DealerSelectionService
@@ -10,6 +11,7 @@ from app.services.offer_comparison_service import OfferComparisonService
 
 __all__ = [
     "CampaignComparisonService",
+    "CampaignContactService",
     "CampaignOfferRankingService",
     "CampaignService",
     "DealerSelectionService",

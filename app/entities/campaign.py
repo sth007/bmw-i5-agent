@@ -65,7 +65,19 @@ class Campaign(Base):
         cascade="all, delete-orphan",
         order_by="DealerOffer.created_at.desc()",
     )
+    contacts: Mapped[list["CampaignDealerContact"]] = relationship(
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="CampaignDealerContact.created_at.asc()",
+    )
+    inbound_emails: Mapped[list["InboundEmail"]] = relationship(
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="InboundEmail.created_at.desc()",
+    )
 
 
 from app.entities.campaign_configuration import CampaignConfiguration  # noqa: E402
+from app.entities.campaign_dealer_contact import CampaignDealerContact  # noqa: E402
 from app.entities.dealer_offer import DealerOffer  # noqa: E402
+from app.entities.inbound_email import InboundEmail  # noqa: E402

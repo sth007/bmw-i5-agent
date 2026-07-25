@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import relationship
 
 from app.database.base import Base
 
@@ -137,3 +138,15 @@ class Dealer(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+    campaign_contacts: Mapped[list["CampaignDealerContact"]] = relationship(
+        back_populates="dealer",
+        cascade="all, delete-orphan",
+    )
+    inbound_emails: Mapped[list["InboundEmail"]] = relationship(back_populates="dealer")
+    dealer_offers: Mapped[list["DealerOffer"]] = relationship(back_populates="dealer")
+
+
+from app.entities.campaign_dealer_contact import CampaignDealerContact  # noqa: E402
+from app.entities.dealer_offer import DealerOffer  # noqa: E402
+from app.entities.inbound_email import InboundEmail  # noqa: E402
