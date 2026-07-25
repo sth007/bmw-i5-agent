@@ -30,6 +30,7 @@ from app.schemas.campaign import (
 )
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
+from app.services.single_campaign_service import MultipleCampaignsError, SingleCampaignService
 
 
 CONTACTABLE_STATUSES = {
@@ -54,6 +55,7 @@ class CampaignContactService:
         self.offer_repository = DealerOfferRepository(db)
         self.inbound_repository = InboundEmailRepository(db)
         self.email_template_service = EmailTemplateService()
+        self.single_campaign_service = SingleCampaignService(db)
 
     def claim_contacts(
         self,
@@ -66,6 +68,7 @@ class CampaignContactService:
 
         self._ensure_contacts_for_campaign(campaign_id)
         if campaign.status == "DRAFT":
+            self.single_campaign_service.delete_all_campaigns_except(campaign_id)
             campaign.status = "STARTED"
             campaign.started_at = campaign.started_at or datetime.now(UTC)
             self.campaign_repository.commit()
@@ -164,20 +167,27 @@ class CampaignContactService:
     def register_inbound_email(self, payload: InboundEmailCreateRequest) -> InboundEmailResponse:
         existing = self.inbound_repository.get_by_provider_message(payload.provider, payload.provider_message_id)
         if existing is not None:
-            return InboundEmailResponse.model_validate(existing)
+            return self._build_inbound_response(existing)
 
         normalized_payload = self._normalize_inbound_payload(payload)
         hinted_campaign = self._resolve_campaign_hint(normalized_payload.campaign_id_hint)
+        auto_campaign = hinted_campaign
+        if auto_campaign is None:
+            auto_campaign = self._resolve_single_campaign_fallback()
         contact, matching_status, _ = self._match_inbound_email(
             normalized_payload,
-            hinted_campaign.id if hinted_campaign is not None else None,
+            auto_campaign.id if auto_campaign is not None else None,
         )
-        campaign_id = contact.campaign_id if contact else (hinted_campaign.id if hinted_campaign is not None else self._extract_campaign_id_from_subject(normalized_payload.subject))
+        campaign_id = contact.campaign_id if contact else (auto_campaign.id if auto_campaign is not None else self._extract_campaign_id_from_subject(normalized_payload.subject))
         dealer_id = contact.dealer_id if contact else None
         contact_id = contact.id if contact else None
-        processing_status = "RECEIVED"
-        if hinted_campaign is not None and contact is None:
-            matching_status = "NEEDS_DEALER_ASSIGNMENT"
+        processing_status = "REGISTERED" if contact is not None else "RECEIVED"
+        if auto_campaign is not None and contact is None:
+            if matching_status == "UNMATCHED":
+                matching_status = "NEEDS_DEALER_ASSIGNMENT"
+            processing_status = "NEEDS_REVIEW"
+        elif auto_campaign is None and matching_status == "UNMATCHED":
+            matching_status = "NO_CAMPAIGN"
             processing_status = "NEEDS_REVIEW"
         inbound_email = InboundEmail(
             campaign_id=campaign_id,
@@ -211,7 +221,7 @@ class CampaignContactService:
             self.inbound_repository.rollback()
             raise
 
-        return InboundEmailResponse.model_validate(inbound_email)
+        return self._build_inbound_response(inbound_email)
 
     def debug_match(self, inbound_email_id: UUID) -> InboundEmailDebugMatchResponse:
         inbound_email = self.inbound_repository.get(inbound_email_id)
@@ -504,6 +514,39 @@ class CampaignContactService:
         if campaign.status not in {"STARTED", "COMPLETED"}:
             raise ValueError("campaign_id_hint must reference a STARTED or COMPLETED campaign.")
         return campaign
+
+    def _resolve_single_campaign_fallback(self):
+        try:
+            campaign = self.single_campaign_service.get_single_campaign()
+        except MultipleCampaignsError as exc:
+            raise ValueError("AMBIGUOUS_CAMPAIGN_STATE") from exc
+        if campaign is None:
+            return None
+        if campaign.status not in {"STARTED", "COMPLETED"}:
+            return None
+        return campaign
+
+    @staticmethod
+    def _build_inbound_response(inbound_email: InboundEmail) -> InboundEmailResponse:
+        return InboundEmailResponse(
+            id=inbound_email.id,
+            campaign_id=inbound_email.campaign_id,
+            dealer_id=inbound_email.dealer_id,
+            campaign_dealer_contact_id=inbound_email.campaign_dealer_contact_id,
+            mailbox_address=inbound_email.mailbox_address,
+            provider=inbound_email.provider,
+            provider_message_id=inbound_email.provider_message_id,
+            provider_thread_id=inbound_email.provider_thread_id,
+            internet_message_id=inbound_email.internet_message_id,
+            sender_email=inbound_email.sender_email,
+            subject=inbound_email.subject,
+            received_at=inbound_email.received_at,
+            processing_status=inbound_email.processing_status,
+            matching_status=inbound_email.matching_status,
+            can_extract=inbound_email.campaign_id is not None and inbound_email.dealer_id is not None,
+            created_at=inbound_email.created_at,
+            updated_at=inbound_email.updated_at,
+        )
 
     @staticmethod
     def _normalize_subject(subject: str | None) -> str | None:

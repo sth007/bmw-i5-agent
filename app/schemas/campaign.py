@@ -354,6 +354,7 @@ class InboundEmailResponse(BaseModel):
     received_at: datetime
     processing_status: str
     matching_status: str
+    can_extract: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -443,3 +444,24 @@ class LatestRelevantCampaignResponse(BaseModel):
     status: str
     started_at: datetime | None
     completed_at: datetime | None
+
+
+class AdminResetRequest(BaseModel):
+    scope: Literal["campaign_data", "all_application_data"] = "campaign_data"
+    confirm: str | None = None
+
+
+class AdminResetResponse(BaseModel):
+    status: Literal["RESET_COMPLETED"]
+    scope: Literal["campaign_data", "all_application_data"]
+    deleted: dict[str, int]
+    completed_at: datetime
+
+
+class AdminResetStatusResponse(BaseModel):
+    environment: str
+    reset_enabled: bool
+    campaign_count: int
+    dealer_count: int
+    inbound_email_count: int
+    dealer_offer_count: int

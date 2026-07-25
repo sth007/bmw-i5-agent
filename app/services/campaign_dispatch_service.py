@@ -10,6 +10,7 @@ from app.repositories.campaign_contact_repository import CampaignContactReposito
 from app.repositories.campaign_repository import CampaignRepository
 from app.schemas.campaign import CampaignCompletionResponse, CampaignDispatchStatusResponse
 from app.services.dealer_selection_service import DealerSelectionService
+from app.services.single_campaign_service import SingleCampaignService
 
 
 BLOCKING_COMPLETION_STATUSES = {"PENDING", "RESERVED", "SEND_FAILED", "SEND_STATE_UNKNOWN"}
@@ -28,6 +29,7 @@ class CampaignDispatchService:
         self.db = db
         self.campaign_repository = CampaignRepository(db)
         self.contact_repository = CampaignContactRepository(db)
+        self.single_campaign_service = SingleCampaignService(db)
 
     def get_dispatch_status(self, campaign_id: UUID) -> CampaignDispatchStatusResponse:
         campaign = self.campaign_repository.get(campaign_id)
@@ -90,6 +92,7 @@ class CampaignDispatchService:
         if pending or reserved or failed:
             raise CampaignCompletionBlockedError(pending=pending, reserved=reserved, failed=failed)
 
+        self.single_campaign_service.delete_all_campaigns_except(campaign_id)
         campaign.status = "COMPLETED"
         campaign.completed_at = campaign.completed_at or datetime.now(UTC)
         if completed_by and campaign.completed_by is None:

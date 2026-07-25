@@ -19,14 +19,17 @@ from app.schemas.campaign import (
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.feature_normalization_service import FeatureNormalizationService
+from app.services.single_campaign_service import SingleCampaignService
 
 
 class CampaignService:
     def __init__(self, db: Session):
         self.repository = CampaignRepository(db)
         self.normalizer = FeatureNormalizationService()
+        self.single_campaign_service = SingleCampaignService(db)
 
     def create_campaign(self, payload: CampaignCreate) -> Campaign:
+        self.single_campaign_service.delete_all_campaigns_except(None)
         campaign = Campaign(
             name=payload.name.strip(),
             config_url=payload.configuration.configuration_url,
@@ -89,6 +92,7 @@ class CampaignService:
         config_id = self.extract_config_id(cleaned_config_url)
         if not config_id:
             raise ValueError("Invalid BMW configuration URL.")
+        self.single_campaign_service.delete_all_campaigns_except(None)
         campaign = Campaign(
             name=cleaned_name,
             config_url=cleaned_config_url,

@@ -164,8 +164,24 @@ def test_latest_relevant_campaign_ignores_draft_and_returns_latest_started_or_co
     assert draft_campaign_id != started_campaign_id
 
     latest = client.get("/api/campaigns/latest-relevant")
+    assert latest.status_code == 404
+
+
+def test_latest_relevant_campaign_returns_single_completed_campaign(client) -> None:
+    _import_dealers(client, 1)
+    campaign_id = _create_campaign(client, "Completed Campaign")
+    contact = _claim_contact(client, campaign_id, limit=1)["contacts"][0]
+    _mark_sent(client, contact, "latest-completed")
+
+    complete = client.post(
+        f"/api/campaigns/{campaign_id}/complete",
+        json={"completed_by": "n8n", "n8n_execution_id": "single-completed"},
+    )
+    assert complete.status_code == 200
+
+    latest = client.get("/api/campaigns/latest-relevant")
     assert latest.status_code == 200
-    assert latest.json()["campaign_id"] == started_campaign_id
+    assert latest.json()["campaign_id"] == campaign_id
 
 
 def test_inbound_email_matches_completed_campaign_with_hint(client) -> None:
@@ -229,3 +245,64 @@ def test_inbound_email_with_known_campaign_but_unknown_dealer_needs_assignment(c
     assert payload["campaign_dealer_contact_id"] is None
     assert payload["matching_status"] == "NEEDS_DEALER_ASSIGNMENT"
     assert payload["processing_status"] == "NEEDS_REVIEW"
+
+
+def test_inbound_email_without_hint_uses_single_started_campaign(client) -> None:
+    _import_dealers(client, 1)
+    campaign_id = _create_campaign(client, "Started Without Hint")
+    contact = _claim_contact(client, campaign_id, limit=1)["contacts"][0]
+    _mark_sent(client, contact, "started-no-hint")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-started-no-hint",
+            "provider_thread_id": "gmail-thread-started-no-hint",
+            "internet_message_id": "<inbound-started-no-hint@example.test>",
+            "sender_email": "dealer001@bmw.example",
+            "subject": contact["subject"],
+            "text_body": "Endpreis 70.490,00 EUR",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_id"] == campaign_id
+    assert payload["matching_status"] == "MATCHED_BY_THREAD"
+    assert payload["can_extract"] is True
+
+
+def test_inbound_email_without_hint_uses_single_completed_campaign(client) -> None:
+    _import_dealers(client, 1)
+    campaign_id = _create_campaign(client, "Completed Without Hint")
+    contact = _claim_contact(client, campaign_id, limit=1)["contacts"][0]
+    _mark_sent(client, contact, "completed-no-hint")
+    complete = client.post(
+        f"/api/campaigns/{campaign_id}/complete",
+        json={"completed_by": "n8n", "n8n_execution_id": "completed-no-hint"},
+    )
+    assert complete.status_code == 200
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-completed-no-hint",
+            "provider_thread_id": "gmail-thread-completed-no-hint",
+            "internet_message_id": "<inbound-completed-no-hint@example.test>",
+            "sender_email": "dealer001@bmw.example",
+            "subject": contact["subject"],
+            "text_body": "Endpreis 70.990,00 EUR",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_id"] == campaign_id
+    assert payload["matching_status"] == "MATCHED_BY_THREAD"
+    assert payload["can_extract"] is True

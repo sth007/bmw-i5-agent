@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Numeric, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,6 +14,10 @@ from app.database.base import Base
 
 class Campaign(Base):
     __tablename__ = "campaign"
+    __table_args__ = (
+        UniqueConstraint("singleton_key", name="uq_campaign_singleton"),
+        CheckConstraint("singleton_key = 1", name="ck_campaign_singleton_key"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -21,6 +25,7 @@ class Campaign(Base):
         default=uuid4,
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    singleton_key: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
     config_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(

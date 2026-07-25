@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.admin import router as admin_router
 from app.api.campaigns import router as campaigns_router
 from app.api.campaigns import contact_router as campaign_contacts_router
 from app.api.campaigns import start_router as campaign_start_router
@@ -24,6 +25,7 @@ app.include_router(campaign_start_router)
 app.include_router(campaign_contacts_router)
 app.include_router(inbound_emails_router)
 app.include_router(review_queue_router)
+app.include_router(admin_router)
 
 
 @app.get("/health")

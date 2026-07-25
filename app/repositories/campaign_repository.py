@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.entities.campaign import Campaign
@@ -37,6 +37,9 @@ class CampaignRepository:
             .order_by(Campaign.created_at.desc())
         )
         return list(self.db.execute(statement).unique().scalars())
+
+    def count(self) -> int:
+        return int(self.db.execute(select(func.count()).select_from(Campaign)).scalar_one())
 
     def get_latest_relevant(self) -> Campaign | None:
         statement = (

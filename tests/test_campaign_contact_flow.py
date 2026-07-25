@@ -299,7 +299,8 @@ def test_register_inbound_email_unmatched_without_known_sender_or_token(client) 
     )
 
     assert inbound.status_code == 201
-    assert inbound.json()["matching_status"] == "UNMATCHED"
+    assert inbound.json()["matching_status"] == "NO_CAMPAIGN"
+    assert inbound.json()["processing_status"] == "NEEDS_REVIEW"
 
 
 def test_register_inbound_email_parses_sender_header(client) -> None:
@@ -380,23 +381,38 @@ def test_register_inbound_email_matches_by_references_header(client) -> None:
 
 
 def test_register_inbound_email_ambiguous_with_multiple_candidates(client) -> None:
-    _import_dealers(client)
-    first_campaign_id = _create_campaign(client)
-    second_campaign_id = _create_campaign(client)
-    first_claim = client.post(
-        f"/api/campaigns/{first_campaign_id}/contacts/claim",
-        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
-    ).json()["contacts"][0]
-    second_claim = client.post(
-        f"/api/campaigns/{second_campaign_id}/contacts/claim",
-        json={"limit": 1, "reservation_owner": "n8n-2", "test_mode": False},
-    ).json()["contacts"][0]
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-dup-001",
+                "name": "BMW AG Niederlassung Stuttgart 1",
+                "city": "Stuttgart",
+                "email": "shared@bmw.de",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-dup-002",
+                "name": "BMW AG Niederlassung Stuttgart 2",
+                "city": "Stuttgart",
+                "email": "shared@bmw.de",
+                "is_published": True,
+            },
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    claims = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"]
+    first_claim, second_claim = claims
     client.post(
         f"/api/campaign-contacts/{first_claim['contact_id']}/sent",
         json={
             "provider": "gmail",
             "provider_message_id": "gmail-message-amb-1",
-            "provider_thread_id": "gmail-thread-amb-1",
+            "provider_thread_id": "gmail-thread-ambiguous",
             "internet_message_id": "<message-amb-1@example.test>",
             "sent_to": first_claim["effective_to"],
             "test_mode": False,
@@ -407,7 +423,7 @@ def test_register_inbound_email_ambiguous_with_multiple_candidates(client) -> No
         json={
             "provider": "gmail",
             "provider_message_id": "gmail-message-amb-2",
-            "provider_thread_id": "gmail-thread-amb-2",
+            "provider_thread_id": "gmail-thread-ambiguous",
             "internet_message_id": "<message-amb-2@example.test>",
             "sent_to": second_claim["effective_to"],
             "test_mode": False,
@@ -420,9 +436,9 @@ def test_register_inbound_email_ambiguous_with_multiple_candidates(client) -> No
             "mailbox_address": "zaour.ludwigsburger@gmail.com",
             "provider": "gmail",
             "provider_message_id": "inbound-amb",
-            "provider_thread_id": None,
+            "provider_thread_id": "gmail-thread-ambiguous",
             "internet_message_id": "<inbound-amb@example.test>",
-            "sender_email": "stuttgart@bmw.de",
+            "sender_email": "unknown@bmw.de",
             "subject": "Rueckmeldung ohne Kampagnentoken",
             "text_body": "Bitte melden Sie sich.",
             "received_at": datetime.now(UTC).isoformat(),
@@ -434,23 +450,38 @@ def test_register_inbound_email_ambiguous_with_multiple_candidates(client) -> No
 
 
 def test_debug_match_shows_checked_steps_and_candidates(client) -> None:
-    _import_dealers(client)
-    first_campaign_id = _create_campaign(client)
-    second_campaign_id = _create_campaign(client)
-    first_claim = client.post(
-        f"/api/campaigns/{first_campaign_id}/contacts/claim",
-        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
-    ).json()["contacts"][0]
-    second_claim = client.post(
-        f"/api/campaigns/{second_campaign_id}/contacts/claim",
-        json={"limit": 1, "reservation_owner": "n8n-2", "test_mode": False},
-    ).json()["contacts"][0]
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-debug-001",
+                "name": "BMW Debug 1",
+                "city": "Stuttgart",
+                "email": "debug-shared@bmw.de",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-debug-002",
+                "name": "BMW Debug 2",
+                "city": "Stuttgart",
+                "email": "debug-shared@bmw.de",
+                "is_published": True,
+            },
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    claims = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"]
+    first_claim, second_claim = claims
     client.post(
         f"/api/campaign-contacts/{first_claim['contact_id']}/sent",
         json={
             "provider": "gmail",
             "provider_message_id": "gmail-message-debug-1",
-            "provider_thread_id": "gmail-thread-debug-1",
+            "provider_thread_id": "gmail-thread-debug-ambiguous",
             "internet_message_id": "<message-debug-1@example.test>",
             "sent_to": first_claim["effective_to"],
             "test_mode": False,
@@ -461,7 +492,7 @@ def test_debug_match_shows_checked_steps_and_candidates(client) -> None:
         json={
             "provider": "gmail",
             "provider_message_id": "gmail-message-debug-2",
-            "provider_thread_id": "gmail-thread-debug-2",
+            "provider_thread_id": "gmail-thread-debug-ambiguous",
             "internet_message_id": "<message-debug-2@example.test>",
             "sent_to": second_claim["effective_to"],
             "test_mode": False,
@@ -474,9 +505,9 @@ def test_debug_match_shows_checked_steps_and_candidates(client) -> None:
             "mailbox_address": "zaour.ludwigsburger@gmail.com",
             "provider": "gmail",
             "provider_message_id": "inbound-debug",
-            "provider_thread_id": None,
+            "provider_thread_id": "gmail-thread-debug-ambiguous",
             "internet_message_id": "<inbound-debug@example.test>",
-            "sender_email": "stuttgart@bmw.de",
+            "sender_email": "unknown@bmw.de",
             "subject": "Rueckmeldung ohne Kampagnentoken",
             "text_body": "Bitte melden Sie sich.",
             "received_at": datetime.now(UTC).isoformat(),
@@ -488,7 +519,7 @@ def test_debug_match_shows_checked_steps_and_candidates(client) -> None:
     assert debug.status_code == 200
     payload = debug.json()
     assert payload["matching_status"] == "AMBIGUOUS"
-    assert payload["checked"]["sender_match"] is True
+    assert payload["checked"]["thread_match"] is False
     assert len(payload["candidate_contacts"]) == 2
 
 
