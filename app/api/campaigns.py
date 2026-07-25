@@ -4,11 +4,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
 from app.schemas.campaign import (
     CampaignComparisonResponse,
+    CampaignCompletionRequest,
+    CampaignCompletionResponse,
     CampaignContactClaimRequest,
     CampaignContactClaimResponse,
     CampaignContactFailedRequest,
@@ -21,12 +24,16 @@ from app.schemas.campaign import (
     CampaignResponse,
     CampaignStatusPatch,
     CampaignSummaryResponse,
+    CampaignDispatchStatusResponse,
     DealerOfferCreate,
     DealerOfferExtractRequest,
     DealerOfferResponse,
+    LatestRelevantCampaignResponse,
 )
 from app.services.campaign_comparison_service import CampaignComparisonService
 from app.services.campaign_contact_service import CampaignContactService
+from app.services.campaign_dispatch_service import CampaignCompletionBlockedError, CampaignDispatchService
+from app.services.campaign_query_service import CampaignQueryService
 from app.services.campaign_service import CampaignService
 from app.services.dealer_offer_service import DealerOfferService, OfferExtractionService
 
@@ -164,6 +171,15 @@ def create_campaign_from_config(
         )
 
 
+@start_router.get("/latest-relevant", response_model=LatestRelevantCampaignResponse)
+def latest_relevant_campaign(db: DatabaseSession) -> LatestRelevantCampaignResponse:
+    service = CampaignQueryService(db)
+    try:
+        return service.get_latest_relevant_campaign()
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @start_router.post(
     "/{campaign_id}/contacts/claim",
     response_model=CampaignContactClaimResponse,
@@ -179,6 +195,54 @@ def claim_campaign_contacts(
         return service.claim_contacts(campaign_id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@start_router.get(
+    "/{campaign_id}/dispatch-status",
+    response_model=CampaignDispatchStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_campaign_dispatch_status(
+    campaign_id: UUID,
+    db: DatabaseSession,
+) -> CampaignDispatchStatusResponse:
+    service = CampaignDispatchService(db)
+    try:
+        return service.get_dispatch_status(campaign_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@start_router.post(
+    "/{campaign_id}/complete",
+    response_model=CampaignCompletionResponse,
+    status_code=status.HTTP_200_OK,
+)
+def complete_campaign(
+    campaign_id: UUID,
+    db: DatabaseSession,
+    payload: CampaignCompletionRequest | None = None,
+):
+    service = CampaignDispatchService(db)
+    payload = payload or CampaignCompletionRequest()
+    try:
+        return service.complete_campaign(
+            campaign_id,
+            completed_by=payload.completed_by,
+            execution_id=payload.n8n_execution_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CampaignCompletionBlockedError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": str(exc),
+                "remaining_sendable_contacts": exc.pending,
+                "remaining_reserved_contacts": exc.reserved,
+                "remaining_failed_contacts": exc.failed,
+            },
+        )
 
 
 contact_router = APIRouter(prefix="/api/campaign-contacts", tags=["campaigns"])

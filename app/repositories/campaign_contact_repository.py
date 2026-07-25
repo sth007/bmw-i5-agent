@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.entities.campaign_dealer_contact import CampaignDealerContact
@@ -72,7 +72,12 @@ class CampaignContactRepository:
         )
         return list(self.db.execute(load_statement).unique().scalars())
 
-    def list_by_provider_thread(self, provider: str, provider_thread_id: str) -> list[CampaignDealerContact]:
+    def list_by_provider_thread(
+        self,
+        provider: str,
+        provider_thread_id: str,
+        campaign_id: UUID | None = None,
+    ) -> list[CampaignDealerContact]:
         statement = (
             select(CampaignDealerContact)
             .options(joinedload(CampaignDealerContact.dealer))
@@ -81,10 +86,16 @@ class CampaignContactRepository:
                 CampaignDealerContact.provider_thread_id == provider_thread_id,
             )
         )
+        if campaign_id is not None:
+            statement = statement.where(CampaignDealerContact.campaign_id == campaign_id)
         statement = statement.order_by(CampaignDealerContact.created_at.desc())
         return list(self.db.execute(statement).unique().scalars())
 
-    def list_by_message_identifiers(self, identifiers: list[str]) -> list[CampaignDealerContact]:
+    def list_by_message_identifiers(
+        self,
+        identifiers: list[str],
+        campaign_id: UUID | None = None,
+    ) -> list[CampaignDealerContact]:
         identifiers = [value for value in identifiers if value]
         if not identifiers:
             return []
@@ -99,9 +110,15 @@ class CampaignContactRepository:
             )
             .order_by(CampaignDealerContact.created_at.desc())
         )
+        if campaign_id is not None:
+            statement = statement.where(CampaignDealerContact.campaign_id == campaign_id)
         return list(self.db.execute(statement).unique().scalars())
 
-    def list_open_by_sender_email(self, sender_email: str) -> list[CampaignDealerContact]:
+    def list_open_by_sender_email(
+        self,
+        sender_email: str,
+        campaign_id: UUID | None = None,
+    ) -> list[CampaignDealerContact]:
         statement = (
             select(CampaignDealerContact)
             .options(joinedload(CampaignDealerContact.dealer))
@@ -118,6 +135,8 @@ class CampaignContactRepository:
                 ),
             )
         )
+        if campaign_id is not None:
+            statement = statement.where(CampaignDealerContact.campaign_id == campaign_id)
         contacts = list(self.db.execute(statement).unique().scalars())
         target = sender_email.strip().lower()
         return [
@@ -142,6 +161,18 @@ class CampaignContactRepository:
             statement = statement.where(CampaignDealerContact.campaign_id == campaign_id)
         statement = statement.order_by(CampaignDealerContact.updated_at.desc())
         return list(self.db.execute(statement).unique().scalars())
+
+    def status_counts(self, campaign_id: UUID) -> dict[str, int]:
+        statement = (
+            select(CampaignDealerContact.status, func.count(CampaignDealerContact.id))
+            .where(CampaignDealerContact.campaign_id == campaign_id)
+            .group_by(CampaignDealerContact.status)
+        )
+        return {status: count for status, count in self.db.execute(statement).all()}
+
+    def total_count(self, campaign_id: UUID) -> int:
+        statement = select(func.count(CampaignDealerContact.id)).where(CampaignDealerContact.campaign_id == campaign_id)
+        return int(self.db.execute(statement).scalar_one())
 
     def commit(self) -> None:
         self.db.commit()

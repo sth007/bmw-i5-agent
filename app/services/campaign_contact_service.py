@@ -65,6 +65,10 @@ class CampaignContactService:
             raise LookupError("Campaign not found")
 
         self._ensure_contacts_for_campaign(campaign_id)
+        if campaign.status == "DRAFT":
+            campaign.status = "STARTED"
+            campaign.started_at = campaign.started_at or datetime.now(UTC)
+            self.campaign_repository.commit()
 
         now = datetime.now(UTC)
         claimed_contacts = self.contact_repository.list_pending_for_update(campaign_id, payload.limit)
@@ -163,11 +167,22 @@ class CampaignContactService:
             return InboundEmailResponse.model_validate(existing)
 
         normalized_payload = self._normalize_inbound_payload(payload)
-        contact, matching_status, _ = self._match_inbound_email(normalized_payload)
+        hinted_campaign = self._resolve_campaign_hint(normalized_payload.campaign_id_hint)
+        contact, matching_status, _ = self._match_inbound_email(
+            normalized_payload,
+            hinted_campaign.id if hinted_campaign is not None else None,
+        )
+        campaign_id = contact.campaign_id if contact else (hinted_campaign.id if hinted_campaign is not None else self._extract_campaign_id_from_subject(normalized_payload.subject))
+        dealer_id = contact.dealer_id if contact else None
+        contact_id = contact.id if contact else None
+        processing_status = "RECEIVED"
+        if hinted_campaign is not None and contact is None:
+            matching_status = "NEEDS_DEALER_ASSIGNMENT"
+            processing_status = "NEEDS_REVIEW"
         inbound_email = InboundEmail(
-            campaign_id=contact.campaign_id if contact else self._extract_campaign_id_from_subject(normalized_payload.subject),
-            dealer_id=contact.dealer_id if contact else None,
-            campaign_dealer_contact_id=contact.id if contact else None,
+            campaign_id=campaign_id,
+            dealer_id=dealer_id,
+            campaign_dealer_contact_id=contact_id,
             mailbox_address=normalized_payload.mailbox_address,
             provider=normalized_payload.provider,
             provider_message_id=normalized_payload.provider_message_id,
@@ -181,7 +196,7 @@ class CampaignContactService:
             text_body=normalized_payload.text_body,
             html_body=normalized_payload.html_body,
             received_at=normalized_payload.received_at,
-            processing_status="RECEIVED",
+            processing_status=processing_status,
             matching_status=matching_status,
             raw_metadata=normalized_payload.raw_metadata,
         )
@@ -379,6 +394,7 @@ class CampaignContactService:
     def _match_inbound_email(
         self,
         payload: InboundEmailCreateRequest,
+        campaign_id_hint: UUID | None = None,
     ) -> tuple[CampaignDealerContact | None, str, dict]:
         checked = {
             "thread_match": False,
@@ -390,7 +406,7 @@ class CampaignContactService:
         candidate_contacts: list[CampaignDealerContact] = []
 
         if payload.provider_thread_id:
-            thread_matches = self.contact_repository.list_by_provider_thread(payload.provider, payload.provider_thread_id)
+            thread_matches = self.contact_repository.list_by_provider_thread(payload.provider, payload.provider_thread_id, campaign_id_hint)
             candidate_contacts.extend(thread_matches)
             checked["thread_match"] = len(thread_matches) == 1
             if len(thread_matches) == 1:
@@ -399,7 +415,7 @@ class CampaignContactService:
                 return None, "AMBIGUOUS", self._debug_payload(checked, thread_matches)
 
         if payload.in_reply_to:
-            in_reply_matches = self.contact_repository.list_by_message_identifiers([payload.in_reply_to])
+            in_reply_matches = self.contact_repository.list_by_message_identifiers([payload.in_reply_to], campaign_id_hint)
             candidate_contacts.extend(contact for contact in in_reply_matches if contact not in candidate_contacts)
             checked["in_reply_to_match"] = len(in_reply_matches) == 1
             if len(in_reply_matches) == 1:
@@ -409,7 +425,7 @@ class CampaignContactService:
 
         reference_identifiers = self._extract_message_ids(payload.references)
         if reference_identifiers:
-            reference_matches = self.contact_repository.list_by_message_identifiers(reference_identifiers)
+            reference_matches = self.contact_repository.list_by_message_identifiers(reference_identifiers, campaign_id_hint)
             candidate_contacts.extend(contact for contact in reference_matches if contact not in candidate_contacts)
             checked["references_match"] = len(reference_matches) == 1
             if len(reference_matches) == 1:
@@ -417,25 +433,28 @@ class CampaignContactService:
             if len(reference_matches) > 1:
                 return None, "AMBIGUOUS", self._debug_payload(checked, reference_matches)
 
-        campaign_id = self._extract_campaign_id_from_subject(payload.subject)
+        subject_campaign_id = self._extract_campaign_id_from_subject(payload.subject)
+        campaign_id = campaign_id_hint or subject_campaign_id
         if campaign_id is not None:
             sender_matches = []
             if payload.sender_email:
-                sender_matches = [
-                    contact
-                    for contact in self.contact_repository.list_open_by_sender_email(payload.sender_email)
-                    if contact.campaign_id == campaign_id
-                ]
+                sender_matches = self.contact_repository.list_open_by_sender_email(payload.sender_email, campaign_id)
             candidate_contacts.extend(contact for contact in sender_matches if contact not in candidate_contacts)
             if len(sender_matches) == 1:
-                checked["campaign_token_match"] = True
-                return sender_matches[0], "MATCHED_BY_CAMPAIGN_TOKEN", self._debug_payload(checked, sender_matches)
+                if subject_campaign_id is not None:
+                    checked["campaign_token_match"] = True
+                    return sender_matches[0], "MATCHED_BY_CAMPAIGN_TOKEN", self._debug_payload(checked, sender_matches)
+                checked["sender_match"] = True
+                return sender_matches[0], "MATCHED_BY_SENDER", self._debug_payload(checked, sender_matches)
             if len(sender_matches) > 1:
-                checked["campaign_token_match"] = True
+                if subject_campaign_id is not None:
+                    checked["campaign_token_match"] = True
+                else:
+                    checked["sender_match"] = True
                 return None, "AMBIGUOUS", self._debug_payload(checked, sender_matches)
 
         if payload.sender_email:
-            sender_matches = self.contact_repository.list_open_by_sender_email(payload.sender_email)
+            sender_matches = self.contact_repository.list_open_by_sender_email(payload.sender_email, campaign_id_hint)
             candidate_contacts.extend(contact for contact in sender_matches if contact not in candidate_contacts)
             if len(sender_matches) == 1:
                 checked["sender_match"] = True
@@ -475,6 +494,16 @@ class CampaignContactService:
                 "sender_email": sender_email,
             }
         )
+
+    def _resolve_campaign_hint(self, campaign_id_hint: UUID | None):
+        if campaign_id_hint is None:
+            return None
+        campaign = self.campaign_repository.get(campaign_id_hint)
+        if campaign is None:
+            raise ValueError("campaign_id_hint does not reference an existing campaign.")
+        if campaign.status not in {"STARTED", "COMPLETED"}:
+            raise ValueError("campaign_id_hint must reference a STARTED or COMPLETED campaign.")
+        return campaign
 
     @staticmethod
     def _normalize_subject(subject: str | None) -> str | None:

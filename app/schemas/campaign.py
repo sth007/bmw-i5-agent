@@ -141,6 +141,9 @@ class CampaignSummaryResponse(BaseModel):
     config_id: str | None
     status: str
     notes: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
     cheapest_exact_price: Decimal | None
     cheapest_alternative_price: Decimal | None
     cheapest_overall_price: Decimal | None
@@ -317,6 +320,7 @@ class CampaignContactStateResponse(BaseModel):
 
 
 class InboundEmailCreateRequest(BaseModel):
+    campaign_id_hint: UUID | None = None
     mailbox_address: EmailStr
     provider: str = Field(min_length=1, max_length=32)
     provider_message_id: str = Field(min_length=1, max_length=255)
@@ -402,3 +406,40 @@ class InboundEmailDebugMatchResponse(BaseModel):
     sender_email: str | None
     checked: dict[str, bool]
     candidate_contacts: list[DebugMatchCandidateResponse]
+
+
+class CampaignCompletionRequest(BaseModel):
+    completed_by: str | None = Field(default=None, max_length=120)
+    n8n_execution_id: str | None = Field(default=None, max_length=120)
+
+
+class CampaignCompletionResponse(BaseModel):
+    campaign_id: UUID
+    status: str
+    completed_at: datetime
+    remaining_sendable_contacts: int
+
+
+class CampaignDispatchStatusResponse(BaseModel):
+    campaign_id: UUID
+    campaign_status: str
+    total_contacts: int
+    pending: int
+    reserved: int
+    sent: int
+    replied: int
+    offer_extracted: int
+    needs_review: int
+    skipped: int
+    send_failed: int
+    send_state_unknown: int
+    has_more_sendable_contacts: bool
+    can_complete: bool
+
+
+class LatestRelevantCampaignResponse(BaseModel):
+    campaign_id: UUID
+    campaign_name: str
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None

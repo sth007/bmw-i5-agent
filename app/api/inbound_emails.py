@@ -34,7 +34,10 @@ def register_inbound_email(
     if existing is not None:
         response.status_code = status.HTTP_200_OK
         return InboundEmailResponse.model_validate(existing)
-    return service.register_inbound_email(payload)
+    try:
+        return service.register_inbound_email(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.post(

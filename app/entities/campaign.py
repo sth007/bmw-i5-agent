@@ -26,11 +26,16 @@ class Campaign(Base):
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        default="draft",
-        server_default="draft",
+        default="DRAFT",
+        server_default="DRAFT",
         index=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    completion_execution_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     cheapest_exact_price: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2),
         nullable=True,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.entities.campaign import Campaign
@@ -37,6 +37,15 @@ class CampaignRepository:
             .order_by(Campaign.created_at.desc())
         )
         return list(self.db.execute(statement).unique().scalars())
+
+    def get_latest_relevant(self) -> Campaign | None:
+        statement = (
+            select(Campaign)
+            .where(Campaign.status.in_(["STARTED", "COMPLETED"]))
+            .order_by(desc(Campaign.started_at), desc(Campaign.created_at))
+            .limit(1)
+        )
+        return self.db.execute(statement).scalar_one_or_none()
 
     def commit(self) -> None:
         self.db.commit()
