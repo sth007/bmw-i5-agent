@@ -48,6 +48,21 @@ def _import_dealers(client):
     assert response.status_code == 200
 
 
+def _mark_contact_sent(client, contact: dict, suffix: str) -> None:
+    response = client.post(
+        f"/api/campaign-contacts/{contact['contact_id']}/sent",
+        json={
+            "provider": "gmail",
+            "provider_message_id": f"gmail-message-{suffix}",
+            "provider_thread_id": f"gmail-thread-{suffix}",
+            "internet_message_id": f"<message-{suffix}@example.test>",
+            "sent_to": contact["effective_to"],
+            "test_mode": False,
+        },
+    )
+    assert response.status_code == 200
+
+
 def test_contact_claim_returns_each_dealer_only_once(client) -> None:
     _import_dealers(client)
     campaign_id = _create_campaign(client)
@@ -378,6 +393,487 @@ def test_register_inbound_email_matches_by_references_header(client) -> None:
     )
     assert inbound.status_code == 201
     assert inbound.json()["matching_status"] == "MATCHED_BY_REFERENCE"
+
+
+def test_register_inbound_email_matches_forwarded_mail_via_signature_email(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-forward-001",
+                "name": "BMW Stuttgart Filiale Rosensteinpark",
+                "street": "Pragstraße 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "email": "linus.hermann@bmw.de",
+                "phone": "+49-711-1318-5312",
+                "is_published": True,
+            }
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contact = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    _mark_contact_sent(client, contact, "forward-signature")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-forward-signature",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-forward-signature@example.test>",
+            "sender_raw": "From: Zaour Assadov <zaour@assadov.de>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "WG: Interesse BMW i5",
+            "text_body": (
+                "Hallo Herr Assadov,\n"
+                "guenstiger ist diese Option leider nicht.\n\n"
+                "Mit freundlichen Gruessen\n"
+                "Linus Hermann\n"
+                "BMW Stuttgart\n"
+                "Filiale Rosensteinpark\n"
+                "Pragstraße 140\n"
+                "70376 Stuttgart\n"
+                "Tel.: +49-711-1318-5312\n"
+                "Mail: Linus.Hermann@bmw.de\n"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_id"] == campaign_id
+    assert payload["dealer_id"] is not None
+    assert payload["campaign_dealer_contact_id"] == contact["contact_id"]
+    assert payload["matching_status"] == "MATCHED"
+    assert payload["can_extract"] is True
+
+    debug = client.get(f"/api/inbound-emails/{payload['id']}/debug-match")
+    assert debug.status_code == 200
+    debug_payload = debug.json()
+    assert debug_payload["matching_method"] == "content_email"
+    assert debug_payload["matching_score"] >= 70
+    assert any("email matched" in reason.lower() for reason in debug_payload["matching_reasons"])
+
+
+def test_register_inbound_email_matches_by_company_and_address_without_email(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-address-001",
+                "name": "Autohaus Beispiel Stuttgart GmbH",
+                "street": "Pragstraße 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "email": "stuttgart-verkauf@example.de",
+                "is_published": True,
+            }
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contact = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    _mark_contact_sent(client, contact, "address-only")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-address-only",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-address-only@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": (
+                "Autohaus Beispiel Stuttgart\n"
+                "Pragstraße 140\n"
+                "70376 Stuttgart\n"
+                "Bitte melden Sie sich wegen des Angebots.\n"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_dealer_contact_id"] == contact["contact_id"]
+    assert payload["matching_status"] == "MATCHED"
+    assert payload["can_extract"] is True
+
+
+def test_register_inbound_email_does_not_match_on_generic_bmw_signals_only(client) -> None:
+    _import_dealers(client)
+    campaign_id = _create_campaign(client)
+    contacts = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 3, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"]
+    for index, contact in enumerate(contacts, start=1):
+        _mark_contact_sent(client, contact, f"generic-{index}")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-generic-bmw",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-generic-bmw@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": "BMW\nKontaktieren Sie uns bitte unter kontakt@bmw.de.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    assert inbound.json()["matching_status"] == "NEEDS_DEALER_ASSIGNMENT"
+    assert inbound.json()["can_extract"] is False
+
+
+def test_register_inbound_email_ignores_mailbox_address_in_history(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-ignore-001",
+                "name": "BMW Hamburg",
+                "city": "Hamburg",
+                "email": "hamburg@bmw.de",
+                "is_published": True,
+            }
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contact = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    _mark_contact_sent(client, contact, "ignore-mailbox")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-ignore-mailbox",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-ignore-mailbox@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": (
+                "Von: zaour.ludwigsburger@gmail.com\n"
+                "An: zaour.ludwigsburger@gmail.com\n"
+                "Bitte antworten Sie an hamburg@bmw.de\n"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    assert inbound.json()["campaign_dealer_contact_id"] == contact["contact_id"]
+    assert inbound.json()["matching_status"] == "MATCHED"
+
+
+def test_register_inbound_email_matches_dealer_from_database_without_prior_contact(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-known-001",
+                "name": "BMW Hamburg",
+                "city": "Hamburg",
+                "email": "hamburg@bmw.de",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-known-002",
+                "name": "BMW Stuttgart Filiale Rosensteinpark",
+                "street": "Pragstraße 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "email": None,
+                "new_car_email": "linus.hermann@bmw.de",
+                "phone": "+49 711 1318 5312",
+                "is_published": False,
+            },
+        ],
+    )
+    assert response.status_code == 200
+
+    campaign_id = _create_campaign(client)
+    claim = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    _mark_contact_sent(client, claim, "known-db-only")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-db-only-dealer",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-db-only-dealer@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": (
+                "Hallo Herr Assadov,\n\n"
+                "Mit freundlichen Gruessen\n"
+                "Linus Hermann\n"
+                "BMW Stuttgart\n"
+                "Filiale Rosensteinpark\n"
+                "Pragstraße 140\n"
+                "70376 Stuttgart\n"
+                "Tel.: +49 711 1318 5312\n"
+                "Mail: Linus.Hermann@bmw.de\n"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_id"] == str(campaign_id)
+    assert payload["dealer_id"] is not None
+    assert payload["campaign_dealer_contact_id"] is not None
+    assert payload["matching_status"] == "MATCHED_BY_DEALER_DB"
+    assert payload["can_extract"] is True
+
+
+def test_register_inbound_email_matches_dealer_from_homepage_and_signature_cluster(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-homepage-001",
+                "name": "BMW AG Niederlassung Stuttgart Filiale Rosensteinpark",
+                "street": "Pragstr. 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "homepage": "http://www.bmw-stuttgart.de/",
+                "email": "bmw-stuttgart@bmw.de",
+                "new_car_email": "online-sales-na-nl-3@bmw.de",
+                "phone": "+49-711-13188000",
+                "is_published": True,
+            }
+        ],
+    )
+    assert response.status_code == 200
+
+    campaign_id = _create_campaign(client)
+    client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    )
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-homepage-cluster",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-homepage-cluster@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": (
+                "Mit freundlichen Gruessen\n"
+                "Linus Hermann\n"
+                "BMW Stuttgart\n"
+                "Filiale Rosensteinpark\n"
+                "Verkauf Neue Automobile\n"
+                "Pragstraße 140\n"
+                "70376 Stuttgart\n"
+                "Tel.: +49-711-1318-5312\n"
+                "Mail: Linus.Hermann@bmw.de\n"
+                "Web: http://www.bmw-stuttgart.de/\n"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_id"] == str(campaign_id)
+    assert payload["dealer_id"] is not None
+    assert payload["campaign_dealer_contact_id"] is not None
+    assert payload["matching_status"] == "MATCHED_BY_DEALER_DB"
+    assert payload["can_extract"] is True
+
+
+def test_register_inbound_email_ignores_base64_html_noise(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-html-001",
+                "name": "BMW Stuttgart",
+                "city": "Stuttgart",
+                "email": "stuttgart-signature@bmw.de",
+                "is_published": True,
+            }
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contact = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    _mark_contact_sent(client, contact, "html-base64")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-html-base64",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-html-base64@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "html_body": (
+                "<html><body>"
+                "<img src=\"data:image/png;base64,QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\" />"
+                "<p>Kontakt: stuttgart-signature@bmw.de</p>"
+                "</body></html>"
+            ),
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    assert inbound.json()["campaign_dealer_contact_id"] == contact["contact_id"]
+    assert inbound.json()["matching_status"] == "MATCHED"
+
+
+def test_register_inbound_email_technical_match_wins_over_conflicting_signature(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-conflict-001",
+                "name": "BMW Stuttgart",
+                "city": "Stuttgart",
+                "email": "stuttgart@bmw.de",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-conflict-002",
+                "name": "BMW Muenchen",
+                "city": "Muenchen",
+                "email": "muenchen@bmw.de",
+                "is_published": True,
+            },
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contacts = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"]
+    first_contact, second_contact = contacts
+    _mark_contact_sent(client, first_contact, "conflict-stuttgart")
+    _mark_contact_sent(client, second_contact, "conflict-muenchen")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-conflict-technical",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-conflict-technical@example.test>",
+            "in_reply_to": "<message-conflict-stuttgart@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": "Mit freundlichen Gruessen\nBMW Muenchen\nMail: muenchen@bmw.de",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    payload = inbound.json()
+    assert payload["campaign_dealer_contact_id"] == first_contact["contact_id"]
+    assert payload["matching_status"] == "MATCHED_BY_REFERENCE"
+
+
+def test_register_inbound_email_keeps_review_when_second_candidate_too_close(client) -> None:
+    response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-close-001",
+                "name": "Autohaus Beispiel Stuttgart GmbH",
+                "street": "Pragstraße 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "email": "close1@example.de",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-close-002",
+                "name": "Autohaus Beispiel Stuttgart GmbH",
+                "street": "Pragstraße 140",
+                "postal_code": "70376",
+                "city": "Stuttgart",
+                "email": "close2@example.de",
+                "is_published": True,
+            },
+        ],
+    )
+    assert response.status_code == 200
+    campaign_id = _create_campaign(client)
+    contacts = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"]
+    for index, contact in enumerate(contacts, start=1):
+        _mark_contact_sent(client, contact, f"close-score-{index}")
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "campaign_id_hint": campaign_id,
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-close-score",
+            "provider_thread_id": None,
+            "internet_message_id": "<inbound-close-score@example.test>",
+            "sender_email": "zaour@assadov.de",
+            "subject": "Rueckmeldung",
+            "text_body": "Autohaus Beispiel Stuttgart\nPragstraße 140\n70376 Stuttgart",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert inbound.status_code == 201
+    assert inbound.json()["matching_status"] == "AMBIGUOUS"
 
 
 def test_register_inbound_email_ambiguous_with_multiple_candidates(client) -> None:

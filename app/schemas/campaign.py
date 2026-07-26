@@ -328,6 +328,7 @@ class InboundEmailCreateRequest(BaseModel):
     internet_message_id: str | None = Field(default=None, max_length=255)
     in_reply_to: str | None = None
     references: str | None = None
+    sender_raw: str | None = Field(default=None, max_length=1000)
     sender_email: str | None = Field(default=None, max_length=255)
     sender_name: str | None = Field(default=None, max_length=255)
     subject: str | None = None
@@ -389,9 +390,12 @@ class ReviewQueueItemResponse(BaseModel):
 
 
 class DebugMatchCandidateResponse(BaseModel):
-    contact_id: UUID
+    contact_id: UUID | None = None
+    dealer_id: int | None = None
     dealer: str
     status: str
+    score: int | None = None
+    reasons: list[str] = Field(default_factory=list)
 
 
 class InboundEmailDebugMatchResponse(BaseModel):
@@ -405,6 +409,10 @@ class InboundEmailDebugMatchResponse(BaseModel):
     references: str | None
     subject: str | None
     sender_email: str | None
+    matching_method: str | None = None
+    matching_score: int | None = None
+    matching_candidate_count: int = 0
+    matching_reasons: list[str] = Field(default_factory=list)
     checked: dict[str, bool]
     candidate_contacts: list[DebugMatchCandidateResponse]
 

@@ -4,13 +4,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
+from app.config import settings
 from app.entities.campaign import Campaign
 from app.entities.campaign_dealer_contact import CampaignDealerContact
 from app.entities.dealer import Dealer
 from app.entities.inbound_email import InboundEmail
 
 
-RESET_HEADERS = {"X-Reset-Token": "change-me"}
+def _reset_headers() -> dict[str, str]:
+    return {"X-Reset-Token": settings.test_reset_token}
 
 
 def _import_dealers(client, dealers: list[dict]) -> None:
@@ -122,12 +124,12 @@ def test_reset_status_requires_valid_token_in_development(client) -> None:
 
 def test_reset_endpoints_are_hidden_in_production(client, monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
-    response = client.get("/api/admin/reset-status", headers=RESET_HEADERS)
+    response = client.get("/api/admin/reset-status", headers=_reset_headers())
     assert response.status_code == 404
 
     response = client.post(
         "/api/admin/reset-test-state",
-        headers=RESET_HEADERS,
+        headers=_reset_headers(),
         json={"scope": "campaign_data"},
     )
     assert response.status_code == 404
@@ -148,7 +150,7 @@ def test_reset_status_returns_counts(client) -> None:
     )
     _create_campaign(client, "Status Campaign")
 
-    response = client.get("/api/admin/reset-status", headers=RESET_HEADERS)
+    response = client.get("/api/admin/reset-status", headers=_reset_headers())
     assert response.status_code == 200
     payload = response.json()
     assert payload["environment"] == "development"
@@ -175,7 +177,7 @@ def test_campaign_data_reset_keeps_dealers(client, db_session) -> None:
 
     response = client.post(
         "/api/admin/reset-test-state",
-        headers=RESET_HEADERS,
+        headers=_reset_headers(),
         json={"scope": "campaign_data"},
     )
     assert response.status_code == 200
@@ -190,7 +192,7 @@ def test_campaign_data_reset_keeps_dealers(client, db_session) -> None:
 def test_all_application_data_reset_requires_confirm(client) -> None:
     response = client.post(
         "/api/admin/reset-test-state",
-        headers=RESET_HEADERS,
+        headers=_reset_headers(),
         json={"scope": "all_application_data"},
     )
     assert response.status_code == 400
@@ -211,7 +213,7 @@ def test_all_application_data_reset_deletes_dealers(client, db_session) -> None:
     )
     response = client.post(
         "/api/admin/reset-test-state",
-        headers=RESET_HEADERS,
+        headers=_reset_headers(),
         json={"scope": "all_application_data", "confirm": "RESET"},
     )
     assert response.status_code == 200

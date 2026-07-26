@@ -4,6 +4,8 @@ import re
 from email.utils import parseaddr
 from datetime import UTC, datetime
 from decimal import Decimal
+from html import unescape
+import unicodedata
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -44,6 +46,21 @@ CONTACTABLE_STATUSES = {
     "SKIPPED",
 }
 CAMPAIGN_TOKEN_PATTERN = re.compile(r"\[BMW-CAMP:([0-9a-fA-F-]+)\]")
+EMAIL_PATTERN = re.compile(r"(?i)(?:mailto:)?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})")
+PHONE_PATTERN = re.compile(r"(?:(?:\+|00)\d[\d\s/().\-]{6,}\d|\b0\d[\d\s/().\-]{6,}\d\b)")
+POSTAL_CODE_PATTERN = re.compile(r"\b\d{5}\b")
+URL_PATTERN = re.compile(r"(?i)\bhttps?://[^\s<>()]+")
+GENERIC_DOMAIN_SUFFIXES = {"gmail.com", "gmx.de", "web.de", "outlook.com", "hotmail.com", "icloud.com"}
+CORPORATE_DOMAINS = {"bmw.de", "mini.de"}
+NAME_TITLES_PATTERN = re.compile(r"\b(herr|frau|dr|prof|dipl\.-ing)\b", flags=re.IGNORECASE)
+LEGAL_FORM_PATTERN = re.compile(r"\b(gmbh|ag|kg|mbh|e\.k\.?|ohg|gbr)\b", flags=re.IGNORECASE)
+COMPANY_STOPWORDS = {"bmw", "autohaus", "niederlassung", "filiale", "betrieb", "gruppe", "zentrum"}
+QUOTE_SPLIT_PATTERN = re.compile(
+    r"(?im)^\s*(from:|von:|to:|an:|gesendet:|betreff:|subject:|-----original message-----|weitergeleitete nachricht|forwarded message)\s*"
+)
+BASE64_IMAGE_PATTERN = re.compile(r"data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+", flags=re.IGNORECASE)
+SCRIPT_STYLE_PATTERN = re.compile(r"(?is)<(script|style)\b.*?>.*?</\1>")
+TAG_PATTERN = re.compile(r"(?is)<[^>]+>")
 
 
 class CampaignContactService:
@@ -174,15 +191,19 @@ class CampaignContactService:
         auto_campaign = hinted_campaign
         if auto_campaign is None:
             auto_campaign = self._resolve_single_campaign_fallback()
-        contact, matching_status, _ = self._match_inbound_email(
+        contact, matched_dealer_id, matching_status, debug = self._match_inbound_email(
             normalized_payload,
             auto_campaign.id if auto_campaign is not None else None,
         )
-        campaign_id = contact.campaign_id if contact else (auto_campaign.id if auto_campaign is not None else self._extract_campaign_id_from_subject(normalized_payload.subject))
-        dealer_id = contact.dealer_id if contact else None
+        campaign_id = contact.campaign_id if contact else (
+            auto_campaign.id if auto_campaign is not None else self._extract_campaign_id_from_subject(normalized_payload.subject)
+        )
+        dealer_id = contact.dealer_id if contact else matched_dealer_id
+        if contact is None and campaign_id is not None and dealer_id is not None:
+            contact = self._ensure_inbound_contact(campaign_id, dealer_id, normalized_payload.received_at)
         contact_id = contact.id if contact else None
-        processing_status = "REGISTERED" if contact is not None else "RECEIVED"
-        if auto_campaign is not None and contact is None:
+        processing_status = "REGISTERED" if dealer_id is not None else "RECEIVED"
+        if auto_campaign is not None and contact is None and dealer_id is None:
             if matching_status == "UNMATCHED":
                 matching_status = "NEEDS_DEALER_ASSIGNMENT"
             processing_status = "NEEDS_REVIEW"
@@ -208,7 +229,7 @@ class CampaignContactService:
             received_at=normalized_payload.received_at,
             processing_status=processing_status,
             matching_status=matching_status,
-            raw_metadata=normalized_payload.raw_metadata,
+            raw_metadata=self._merge_matching_metadata(normalized_payload.raw_metadata, normalized_payload.sender_raw, debug),
         )
 
         try:
@@ -236,6 +257,7 @@ class CampaignContactService:
             internet_message_id=inbound_email.internet_message_id,
             in_reply_to=inbound_email.in_reply_to,
             references=inbound_email.references,
+            sender_raw=(inbound_email.raw_metadata or {}).get("sender_raw"),
             sender_email=inbound_email.sender_email,
             sender_name=inbound_email.sender_name,
             subject=inbound_email.subject,
@@ -244,7 +266,7 @@ class CampaignContactService:
             received_at=inbound_email.received_at,
             raw_metadata=inbound_email.raw_metadata,
         )
-        _, _, debug = self._match_inbound_email(payload)
+        _, _, _, debug = self._match_inbound_email(payload, inbound_email.campaign_id)
         return InboundEmailDebugMatchResponse(
             inbound_email_id=inbound_email.id,
             matching_status=inbound_email.matching_status,
@@ -256,6 +278,10 @@ class CampaignContactService:
             references=inbound_email.references,
             subject=inbound_email.subject,
             sender_email=inbound_email.sender_email,
+            matching_method=debug.get("matching_method"),
+            matching_score=debug.get("matching_score"),
+            matching_candidate_count=debug.get("matching_candidate_count", 0),
+            matching_reasons=debug.get("matching_reasons", []),
             checked=debug["checked"],
             candidate_contacts=debug["candidate_contacts"],
         )
@@ -405,13 +431,15 @@ class CampaignContactService:
         self,
         payload: InboundEmailCreateRequest,
         campaign_id_hint: UUID | None = None,
-    ) -> tuple[CampaignDealerContact | None, str, dict]:
+    ) -> tuple[CampaignDealerContact | None, int | None, str, dict]:
         checked = {
             "thread_match": False,
             "in_reply_to_match": False,
             "references_match": False,
             "campaign_token_match": False,
             "sender_match": False,
+            "content_email_match": False,
+            "content_fallback_match": False,
         }
         candidate_contacts: list[CampaignDealerContact] = []
 
@@ -420,18 +448,38 @@ class CampaignContactService:
             candidate_contacts.extend(thread_matches)
             checked["thread_match"] = len(thread_matches) == 1
             if len(thread_matches) == 1:
-                return thread_matches[0], "MATCHED_BY_THREAD", self._debug_payload(checked, thread_matches)
+                return thread_matches[0], thread_matches[0].dealer_id, "MATCHED_BY_THREAD", self._debug_payload(
+                    checked,
+                    self._technical_candidates(thread_matches, 80, "thread"),
+                    matching_method="thread",
+                    matching_score=80,
+                    matching_reasons=["provider thread matched exactly"],
+                )
             if len(thread_matches) > 1:
-                return None, "AMBIGUOUS", self._debug_payload(checked, thread_matches)
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    self._technical_candidates(thread_matches, 80, "thread"),
+                    matching_method="thread",
+                )
 
         if payload.in_reply_to:
             in_reply_matches = self.contact_repository.list_by_message_identifiers([payload.in_reply_to], campaign_id_hint)
             candidate_contacts.extend(contact for contact in in_reply_matches if contact not in candidate_contacts)
             checked["in_reply_to_match"] = len(in_reply_matches) == 1
             if len(in_reply_matches) == 1:
-                return in_reply_matches[0], "MATCHED_BY_REFERENCE", self._debug_payload(checked, in_reply_matches)
+                return in_reply_matches[0], in_reply_matches[0].dealer_id, "MATCHED_BY_REFERENCE", self._debug_payload(
+                    checked,
+                    self._technical_candidates(in_reply_matches, 100, "in_reply_to"),
+                    matching_method="in_reply_to",
+                    matching_score=100,
+                    matching_reasons=["in-reply-to matched sent message id exactly"],
+                )
             if len(in_reply_matches) > 1:
-                return None, "AMBIGUOUS", self._debug_payload(checked, in_reply_matches)
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    self._technical_candidates(in_reply_matches, 100, "in_reply_to"),
+                    matching_method="in_reply_to",
+                )
 
         reference_identifiers = self._extract_message_ids(payload.references)
         if reference_identifiers:
@@ -439,9 +487,19 @@ class CampaignContactService:
             candidate_contacts.extend(contact for contact in reference_matches if contact not in candidate_contacts)
             checked["references_match"] = len(reference_matches) == 1
             if len(reference_matches) == 1:
-                return reference_matches[0], "MATCHED_BY_REFERENCE", self._debug_payload(checked, reference_matches)
+                return reference_matches[0], reference_matches[0].dealer_id, "MATCHED_BY_REFERENCE", self._debug_payload(
+                    checked,
+                    self._technical_candidates(reference_matches, 90, "references"),
+                    matching_method="references",
+                    matching_score=90,
+                    matching_reasons=["references header matched sent message id exactly"],
+                )
             if len(reference_matches) > 1:
-                return None, "AMBIGUOUS", self._debug_payload(checked, reference_matches)
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    self._technical_candidates(reference_matches, 90, "references"),
+                    matching_method="references",
+                )
 
         subject_campaign_id = self._extract_campaign_id_from_subject(payload.subject)
         campaign_id = campaign_id_hint or subject_campaign_id
@@ -453,27 +511,101 @@ class CampaignContactService:
             if len(sender_matches) == 1:
                 if subject_campaign_id is not None:
                     checked["campaign_token_match"] = True
-                    return sender_matches[0], "MATCHED_BY_CAMPAIGN_TOKEN", self._debug_payload(checked, sender_matches)
+                    return sender_matches[0], sender_matches[0].dealer_id, "MATCHED_BY_CAMPAIGN_TOKEN", self._debug_payload(
+                        checked,
+                        self._technical_candidates(sender_matches, 75, "campaign_token"),
+                        matching_method="campaign_token",
+                        matching_score=75,
+                        matching_reasons=["campaign token and direct sender email matched"],
+                    )
                 checked["sender_match"] = True
-                return sender_matches[0], "MATCHED_BY_SENDER", self._debug_payload(checked, sender_matches)
+                return sender_matches[0], sender_matches[0].dealer_id, "MATCHED_BY_SENDER", self._debug_payload(
+                    checked,
+                    self._technical_candidates(sender_matches, 75, "sender_email"),
+                    matching_method="sender_email",
+                    matching_score=75,
+                    matching_reasons=["direct sender email matched campaign contact"],
+                )
             if len(sender_matches) > 1:
                 if subject_campaign_id is not None:
                     checked["campaign_token_match"] = True
                 else:
                     checked["sender_match"] = True
-                return None, "AMBIGUOUS", self._debug_payload(checked, sender_matches)
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    self._technical_candidates(sender_matches, 75, "sender_email"),
+                    matching_method="sender_email",
+                )
 
         if payload.sender_email:
             sender_matches = self.contact_repository.list_open_by_sender_email(payload.sender_email, campaign_id_hint)
             candidate_contacts.extend(contact for contact in sender_matches if contact not in candidate_contacts)
             if len(sender_matches) == 1:
                 checked["sender_match"] = True
-                return sender_matches[0], "MATCHED_BY_SENDER", self._debug_payload(checked, sender_matches)
+                return sender_matches[0], sender_matches[0].dealer_id, "MATCHED_BY_SENDER", self._debug_payload(
+                    checked,
+                    self._technical_candidates(sender_matches, 75, "sender_email"),
+                    matching_method="sender_email",
+                    matching_score=75,
+                    matching_reasons=["direct sender email matched campaign contact"],
+                )
             if len(sender_matches) > 1:
                 checked["sender_match"] = True
-                return None, "AMBIGUOUS", self._debug_payload(checked, sender_matches)
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    self._technical_candidates(sender_matches, 75, "sender_email"),
+                    matching_method="sender_email",
+                )
 
-        return None, "UNMATCHED", self._debug_payload(checked, candidate_contacts)
+        if campaign_id is not None:
+            content_match = self._match_contact_by_content(payload, campaign_id)
+            checked["content_email_match"] = any(
+                "email matched" in reason.lower() for candidate in content_match["candidate_contacts"] for reason in candidate["reasons"]
+            )
+            checked["content_fallback_match"] = content_match["matching_score"] > 0
+            if content_match["match"] is not None:
+                return content_match["match"], content_match["match"].dealer_id, "MATCHED", self._debug_payload(
+                    checked,
+                    content_match["candidate_contacts"],
+                    matching_method=content_match["matching_method"],
+                    matching_score=content_match["matching_score"],
+                    matching_reasons=content_match["matching_reasons"],
+                )
+            if content_match["status"] == "AMBIGUOUS":
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    content_match["candidate_contacts"],
+                    matching_method=content_match["matching_method"],
+                    matching_score=content_match["matching_score"],
+                    matching_reasons=content_match["matching_reasons"],
+                )
+
+            dealer_match = self._match_dealer_by_content(payload, campaign_id)
+            checked["content_email_match"] = checked["content_email_match"] or any(
+                "email matched" in reason.lower() for candidate in dealer_match["candidate_contacts"] for reason in candidate["reasons"]
+            )
+            checked["content_fallback_match"] = checked["content_fallback_match"] or dealer_match["matching_score"] > 0
+            if dealer_match["dealer_id"] is not None:
+                return None, dealer_match["dealer_id"], "MATCHED_BY_DEALER_DB", self._debug_payload(
+                    checked,
+                    dealer_match["candidate_contacts"],
+                    matching_method=dealer_match["matching_method"],
+                    matching_score=dealer_match["matching_score"],
+                    matching_reasons=dealer_match["matching_reasons"],
+                )
+            if dealer_match["status"] == "AMBIGUOUS":
+                return None, None, "AMBIGUOUS", self._debug_payload(
+                    checked,
+                    dealer_match["candidate_contacts"],
+                    matching_method=dealer_match["matching_method"],
+                    matching_score=dealer_match["matching_score"],
+                    matching_reasons=dealer_match["matching_reasons"],
+                )
+
+        return None, None, "UNMATCHED", self._debug_payload(
+            checked,
+            self._technical_candidates(candidate_contacts, None, None),
+        )
 
     @staticmethod
     def _extract_campaign_id_from_subject(subject: str | None) -> UUID | None:
@@ -500,6 +632,7 @@ class CampaignContactService:
                 "internet_message_id": CampaignContactService._normalize_message_id(payload.internet_message_id),
                 "in_reply_to": CampaignContactService._normalize_message_id(payload.in_reply_to),
                 "references": CampaignContactService._normalize_references(payload.references),
+                "sender_raw": CampaignContactService._normalize_sender_raw(payload.sender_raw),
                 "sender_name": sender_name,
                 "sender_email": sender_email,
             }
@@ -549,6 +682,13 @@ class CampaignContactService:
         )
 
     @staticmethod
+    def _normalize_sender_raw(sender_raw: str | None) -> str | None:
+        if sender_raw is None:
+            return None
+        normalized = re.sub(r"^\s*from\s*:\s*", "", sender_raw, flags=re.IGNORECASE).strip()
+        return normalized or None
+
+    @staticmethod
     def _normalize_subject(subject: str | None) -> str | None:
         if subject is None:
             return None
@@ -596,18 +736,576 @@ class CampaignContactService:
         return (sender_name.strip() if sender_name else None), None
 
     @staticmethod
-    def _debug_payload(checked: dict[str, bool], contacts: list[CampaignDealerContact]) -> dict:
+    def _debug_payload(
+        checked: dict[str, bool],
+        contacts: list[dict],
+        *,
+        matching_method: str | None = None,
+        matching_score: int | None = None,
+        matching_reasons: list[str] | None = None,
+    ) -> dict:
         return {
             "checked": checked,
-            "candidate_contacts": [
-                {
-                    "contact_id": contact.id,
-                    "dealer": contact.dealer.name if contact.dealer else "Unknown Dealer",
-                    "status": contact.status,
-                }
-                for contact in contacts
-            ],
+            "matching_method": matching_method,
+            "matching_score": matching_score,
+            "matching_candidate_count": len(contacts),
+            "matching_reasons": matching_reasons or [],
+            "candidate_contacts": contacts,
         }
+
+    @staticmethod
+    def _technical_candidates(
+        contacts: list[CampaignDealerContact],
+        score: int | None,
+        reason: str | None,
+    ) -> list[dict]:
+        return [
+            {
+                "contact_id": contact.id,
+                "dealer_id": contact.dealer_id,
+                "dealer": contact.dealer.name if contact.dealer else "Unknown Dealer",
+                "status": contact.status,
+                "score": score,
+                "reasons": [reason] if reason else [],
+            }
+            for contact in contacts
+        ]
+
+    @staticmethod
+    def _merge_matching_metadata(raw_metadata: dict | None, sender_raw: str | None, debug: dict) -> dict | None:
+        metadata = dict(raw_metadata or {})
+        if sender_raw:
+            metadata["sender_raw"] = sender_raw
+        if debug.get("matching_method"):
+            metadata["matching_diagnostics"] = {
+                "matching_method": debug.get("matching_method"),
+                "matching_score": debug.get("matching_score"),
+                "matching_candidate_count": debug.get("matching_candidate_count", 0),
+                "matching_reasons": debug.get("matching_reasons", []),
+            }
+        return metadata or None
+
+    def _match_contact_by_content(self, payload: InboundEmailCreateRequest, campaign_id: UUID) -> dict:
+        contacts = self.contact_repository.list_open_for_campaign(campaign_id)
+        if not contacts:
+            return {
+                "match": None,
+                "status": "UNMATCHED",
+                "matching_method": None,
+                "matching_score": 0,
+                "matching_reasons": [],
+                "candidate_contacts": [],
+            }
+
+        message_context = self._build_message_context(payload)
+        candidates = []
+        for contact in contacts:
+            candidate = self._score_contact_candidate(contact, payload, message_context)
+            if candidate["score"] > 0:
+                candidates.append(candidate)
+
+        candidates.sort(key=lambda item: (-item["score"], -len(item["independent_signals"]), str(item["contact"].id)))
+        candidate_payloads = [self._candidate_payload(item) for item in candidates]
+        if not candidates:
+            return {
+                "match": None,
+                "status": "UNMATCHED",
+                "matching_method": None,
+                "matching_score": 0,
+                "matching_reasons": [],
+                "candidate_contacts": [],
+            }
+
+        best = candidates[0]
+        second_score = candidates[1]["score"] if len(candidates) > 1 else 0
+        if self._is_content_match_acceptable(best["score"], len(best["independent_signals"]), second_score):
+            return {
+                "match": best["contact"],
+                "status": "MATCHED",
+                "matching_method": best["matching_method"],
+                "matching_score": best["score"],
+                "matching_reasons": best["reasons"],
+                "candidate_contacts": candidate_payloads,
+            }
+
+        if len(candidates) > 1:
+            return {
+                "match": None,
+                "status": "AMBIGUOUS",
+                "matching_method": best["matching_method"],
+                "matching_score": best["score"],
+                "matching_reasons": best["reasons"],
+                "candidate_contacts": candidate_payloads,
+            }
+
+        return {
+            "match": None,
+            "status": "UNMATCHED",
+            "matching_method": best["matching_method"],
+            "matching_score": best["score"],
+            "matching_reasons": best["reasons"],
+            "candidate_contacts": candidate_payloads,
+        }
+
+    def _match_dealer_by_content(self, payload: InboundEmailCreateRequest, campaign_id: UUID) -> dict:
+        dealers = self.dealer_repository.get_all()
+        if not dealers:
+            return {
+                "dealer_id": None,
+                "status": "UNMATCHED",
+                "matching_method": None,
+                "matching_score": 0,
+                "matching_reasons": [],
+                "candidate_contacts": [],
+            }
+
+        existing_contact_dealer_ids = {
+            contact.dealer_id
+            for contact in self.contact_repository.list_open_for_campaign(campaign_id)
+        }
+        message_context = self._build_message_context(payload)
+        candidates = []
+        for dealer in dealers:
+            if dealer.id in existing_contact_dealer_ids:
+                continue
+            candidate = self._score_dealer_candidate(dealer, payload, message_context)
+            if candidate["score"] > 0:
+                candidates.append(candidate)
+
+        candidates.sort(key=lambda item: (-item["score"], -len(item["independent_signals"]), item["dealer"].id))
+        candidate_payloads = [self._dealer_candidate_payload(item) for item in candidates]
+        if not candidates:
+            return {
+                "dealer_id": None,
+                "status": "UNMATCHED",
+                "matching_method": None,
+                "matching_score": 0,
+                "matching_reasons": [],
+                "candidate_contacts": [],
+            }
+
+        best = candidates[0]
+        second_score = candidates[1]["score"] if len(candidates) > 1 else 0
+        if self._is_content_match_acceptable(best["score"], len(best["independent_signals"]), second_score):
+            return {
+                "dealer_id": best["dealer"].id,
+                "status": "MATCHED",
+                "matching_method": best["matching_method"],
+                "matching_score": best["score"],
+                "matching_reasons": best["reasons"],
+                "candidate_contacts": candidate_payloads,
+            }
+
+        if len(candidates) > 1:
+            return {
+                "dealer_id": None,
+                "status": "AMBIGUOUS",
+                "matching_method": best["matching_method"],
+                "matching_score": best["score"],
+                "matching_reasons": best["reasons"],
+                "candidate_contacts": candidate_payloads,
+            }
+
+        return {
+            "dealer_id": None,
+            "status": "UNMATCHED",
+            "matching_method": best["matching_method"],
+            "matching_score": best["score"],
+            "matching_reasons": best["reasons"],
+            "candidate_contacts": candidate_payloads,
+        }
+
+    def _score_dealer_candidate(self, dealer, payload: InboundEmailCreateRequest, context: dict) -> dict:
+        candidate = self._score_candidate_for_dealer(dealer, context)
+        candidate["dealer"] = dealer
+        return candidate
+
+    @staticmethod
+    def _is_content_match_acceptable(score: int, independent_signal_count: int, second_score: int) -> bool:
+        if score >= 70 and score - second_score >= 20:
+            return True
+        return score >= 60 and independent_signal_count >= 2 and score - second_score >= 20
+
+    def _build_message_context(self, payload: InboundEmailCreateRequest) -> dict:
+        html_text = self._html_to_text(payload.html_body)
+        combined_text = "\n\n".join(
+            part for part in [payload.text_body or "", html_text] if part and part.strip()
+        )
+        current_text, quoted_text = self._split_current_and_quoted_text(combined_text)
+        ignored_emails = self._ignored_user_emails(payload)
+        current_emails = self._extract_emails(current_text, ignored_emails)
+        quoted_emails = self._extract_emails(quoted_text, ignored_emails)
+        sender_raw_emails = self._extract_emails(payload.sender_raw or "", ignored_emails)
+        sender_email_values = self._extract_emails(payload.sender_email or "", ignored_emails)
+        current_phones = self._extract_phone_numbers(current_text)
+        quoted_phones = self._extract_phone_numbers(quoted_text)
+        sender_domains = {
+            self._email_domain(value)
+            for value in current_emails | quoted_emails | sender_raw_emails | sender_email_values
+            if self._email_domain(value)
+        }
+        url_domains = self._extract_url_domains(combined_text)
+        current_text_normalized = self._normalize_text_for_search(current_text)
+        quoted_text_normalized = self._normalize_text_for_search(quoted_text)
+        return {
+            "current_text": current_text,
+            "quoted_text": quoted_text,
+            "current_text_normalized": current_text_normalized,
+            "quoted_text_normalized": quoted_text_normalized,
+            "current_emails": current_emails | sender_raw_emails | sender_email_values,
+            "quoted_emails": quoted_emails,
+            "current_phones": current_phones,
+            "quoted_phones": quoted_phones,
+            "postal_codes": set(POSTAL_CODE_PATTERN.findall(combined_text)),
+            "domains": sender_domains,
+            "url_domains": url_domains,
+        }
+
+    def _score_contact_candidate(self, contact: CampaignDealerContact, payload: InboundEmailCreateRequest, context: dict) -> dict:
+        dealer = contact.dealer
+        if dealer is None:
+            return {"contact": contact, "score": 0, "reasons": [], "independent_signals": set(), "matching_method": None}
+
+        candidate = self._score_candidate_for_dealer(dealer, context)
+        candidate["contact"] = contact
+        return candidate
+
+    def _score_candidate_for_dealer(self, dealer, context: dict) -> dict:
+        score = 0
+        reasons: list[str] = []
+        independent_signals: set[str] = set()
+        dealer_emails = self._dealer_emails(dealer)
+        current_email_matches = sorted(context["current_emails"] & dealer_emails)
+        quoted_email_matches = sorted(context["quoted_emails"] & dealer_emails)
+        if current_email_matches:
+            score += 70
+            independent_signals.add("content_email")
+            reasons.append(f"current content email matched: {current_email_matches[0]}")
+        elif quoted_email_matches:
+            score += 55
+            independent_signals.add("quoted_email")
+            reasons.append(f"quoted content email matched: {quoted_email_matches[0]}")
+
+        dealer_phones = self._dealer_phones(dealer)
+        phone_match = sorted((context["current_phones"] | context["quoted_phones"]) & dealer_phones)
+        if phone_match:
+            score += 45
+            independent_signals.add("phone")
+            reasons.append("phone number matched")
+
+        company_match_score, company_reason = self._company_match_score(dealer, context["current_text_normalized"], context["quoted_text_normalized"])
+        if company_match_score:
+            score += company_match_score
+            independent_signals.add("company")
+            reasons.append(company_reason)
+
+        if dealer.postal_code and dealer.city:
+            normalized_city = self._normalize_text_for_search(dealer.city)
+            if dealer.postal_code in context["postal_codes"] and normalized_city and normalized_city in context["current_text_normalized"]:
+                score += 25
+                independent_signals.add("postal_city")
+                reasons.append("postal code and city matched")
+
+        street_reason = self._street_match_reason(dealer, context["current_text_normalized"])
+        if street_reason:
+            score += 25
+            independent_signals.add("street")
+            reasons.append(street_reason)
+
+        if {"company", "postal_city", "street"}.issubset(independent_signals):
+            score += 20
+            independent_signals.add("address_cluster")
+            reasons.append("dealer company and full address cluster matched")
+
+        dealer_domains = {self._email_domain(email) for email in dealer_emails if self._email_domain(email)}
+        matched_domains = {
+            domain
+            for domain in context["domains"] & dealer_domains
+            if domain and domain not in GENERIC_DOMAIN_SUFFIXES and domain not in CORPORATE_DOMAINS
+        }
+        if matched_domains:
+            score += 10
+            independent_signals.add("domain")
+            reasons.append(f"dealer domain matched: {sorted(matched_domains)[0]}")
+
+        homepage_domains = self._dealer_homepage_domains(dealer)
+        matched_homepage_domains = context["url_domains"] & homepage_domains
+        if matched_homepage_domains:
+            score += 20
+            independent_signals.add("homepage")
+            reasons.append(f"dealer homepage domain matched: {sorted(matched_homepage_domains)[0]}")
+
+        if (
+            "company" in independent_signals
+            and ("street" in independent_signals or "postal_city" in independent_signals)
+            and any(domain in CORPORATE_DOMAINS for domain in context["domains"])
+        ):
+            score += 15
+            independent_signals.add("corporate_signature")
+            reasons.append("corporate BMW signature matched dealer location")
+
+        matching_method = None
+        if current_email_matches or quoted_email_matches:
+            matching_method = "content_email"
+        elif matched_homepage_domains:
+            matching_method = "homepage"
+        elif street_reason or ("postal_city" in independent_signals and "company" in independent_signals):
+            matching_method = "name_company_address"
+        elif phone_match:
+            matching_method = "signature"
+        elif matched_domains:
+            matching_method = "content_email"
+
+        return {
+            "contact": None,
+            "score": score,
+            "reasons": reasons,
+            "independent_signals": independent_signals,
+            "matching_method": matching_method,
+        }
+
+    def _company_match_score(self, dealer, current_text_normalized: str, quoted_text_normalized: str) -> tuple[int, str | None]:
+        normalized_name = self._normalize_text_for_search(dealer.name)
+        simplified_name = self._normalize_company_name(dealer.name)
+        current_tokens = set(current_text_normalized.split())
+        quoted_tokens = set(quoted_text_normalized.split())
+        distinctive_tokens = [
+            token for token in simplified_name.split() if len(token) > 2 and token not in COMPANY_STOPWORDS
+        ]
+        if simplified_name and len(simplified_name) >= 10 and simplified_name in current_text_normalized:
+            return 35, "dealer company name matched in current message"
+        if len(distinctive_tokens) >= 2 and all(token in current_tokens for token in distinctive_tokens[:3]):
+            return 35, "dealer company tokens matched in current message"
+        if simplified_name and len(simplified_name) >= 10 and simplified_name in quoted_text_normalized:
+            return 20, "dealer company name matched in quoted message"
+        if normalized_name and normalized_name in current_text_normalized and simplified_name != "bmw":
+            return 20, "dealer name matched in current message"
+        if len(distinctive_tokens) >= 2 and all(token in quoted_tokens for token in distinctive_tokens[:3]):
+            return 20, "dealer company tokens matched in quoted message"
+        return 0, None
+
+    @staticmethod
+    def _street_match_reason(dealer, current_text_normalized: str) -> str | None:
+        if not dealer.street:
+            return None
+        street_tokens = CampaignContactService._split_street_components(dealer.street)
+        if not street_tokens:
+            return None
+        street_name, house_number = street_tokens
+        if street_name and house_number and street_name in current_text_normalized and house_number in current_text_normalized:
+            return "street and house number matched"
+        return None
+
+    @staticmethod
+    def _split_street_components(street: str) -> tuple[str | None, str | None]:
+        normalized = CampaignContactService._normalize_text_for_search(street)
+        normalized = normalized.replace("strasse", "str").replace("straße", "str")
+        match = re.search(r"(.+?)\s+(\d+[a-zA-Z]?)$", normalized)
+        if not match:
+            return normalized or None, None
+        return match.group(1).strip(), match.group(2).strip()
+
+    @staticmethod
+    def _candidate_payload(candidate: dict) -> dict:
+        contact = candidate["contact"]
+        return {
+            "contact_id": contact.id,
+            "dealer_id": contact.dealer_id,
+            "dealer": contact.dealer.name if contact.dealer else "Unknown Dealer",
+            "status": contact.status,
+            "score": candidate["score"],
+            "reasons": candidate["reasons"],
+        }
+
+    @staticmethod
+    def _dealer_candidate_payload(candidate: dict) -> dict:
+        dealer = candidate["dealer"]
+        return {
+            "contact_id": None,
+            "dealer_id": dealer.id,
+            "dealer": dealer.name,
+            "status": "DEALER_DB_ONLY",
+            "score": candidate["score"],
+            "reasons": candidate["reasons"],
+        }
+
+    def _ensure_inbound_contact(
+        self,
+        campaign_id: UUID,
+        dealer_id: int,
+        received_at: datetime,
+    ) -> CampaignDealerContact:
+        existing = self.contact_repository.get_by_campaign_and_dealer(campaign_id, dealer_id)
+        if existing is not None:
+            return existing
+
+        dealer = self.dealer_repository.get_by_id(dealer_id)
+        if dealer is None:
+            raise LookupError("Dealer not found")
+
+        recipient_email = next(
+            (
+                value.strip()
+                for value in [dealer.email, dealer.new_car_email, dealer.used_car_email]
+                if value and value.strip()
+            ),
+            None,
+        )
+        contact = CampaignDealerContact(
+            campaign_id=campaign_id,
+            dealer_id=dealer.id,
+            status="REPLIED",
+            recipient_email=recipient_email,
+            replied_at=received_at,
+            outbound_message_key=f"campaign:{campaign_id}:dealer:{dealer.id}:inbound-only",
+        )
+        contact.dealer = dealer
+        return self.contact_repository.add(contact)
+
+    @staticmethod
+    def _dealer_emails(dealer) -> set[str]:
+        return {
+            value.strip().lower()
+            for value in [dealer.email, dealer.new_car_email, dealer.used_car_email]
+            if value and value.strip()
+        }
+
+    @staticmethod
+    def _dealer_homepage_domains(dealer) -> set[str]:
+        values = set()
+        for value in [dealer.homepage]:
+            domain = CampaignContactService._normalize_domain_from_url(value)
+            if domain:
+                values.add(domain)
+        return values
+
+    @staticmethod
+    def _dealer_phones(dealer) -> set[str]:
+        return {
+            value
+            for value in [
+                CampaignContactService._normalize_phone(dealer.phone),
+                CampaignContactService._normalize_phone(dealer.new_car_phone),
+                CampaignContactService._normalize_phone(dealer.used_car_phone),
+            ]
+            if value
+        }
+
+    @staticmethod
+    def _ignored_user_emails(payload: InboundEmailCreateRequest) -> set[str]:
+        ignored = {payload.mailbox_address.strip().lower()}
+        metadata = payload.raw_metadata or {}
+        for key in ["known_user_emails", "user_emails", "ignored_emails"]:
+            values = metadata.get(key)
+            if isinstance(values, list):
+                ignored.update(str(value).strip().lower() for value in values if str(value).strip())
+        return ignored
+
+    @staticmethod
+    def _extract_emails(value: str, ignored: set[str]) -> set[str]:
+        matches = set()
+        for match in EMAIL_PATTERN.findall(value or ""):
+            normalized = match.strip().strip(" <>[]()\"'").lower()
+            if normalized and normalized not in ignored:
+                matches.add(normalized)
+        return matches
+
+    @staticmethod
+    def _extract_phone_numbers(value: str) -> set[str]:
+        return {
+            normalized
+            for normalized in (
+                CampaignContactService._normalize_phone(match.group(0))
+                for match in PHONE_PATTERN.finditer(value or "")
+            )
+            if normalized
+        }
+
+    @staticmethod
+    def _extract_url_domains(value: str) -> set[str]:
+        domains = set()
+        for match in URL_PATTERN.findall(value or ""):
+            domain = CampaignContactService._normalize_domain_from_url(match)
+            if domain:
+                domains.add(domain)
+        return domains
+
+    @staticmethod
+    def _normalize_phone(value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = re.sub(r"[^\d+]", "", value)
+        if normalized.startswith("00"):
+            normalized = f"+{normalized[2:]}"
+        if normalized.startswith("+49"):
+            normalized = f"0{normalized[3:]}"
+        if len(normalized) < 7:
+            return None
+        return normalized
+
+    @staticmethod
+    def _email_domain(email: str | None) -> str | None:
+        if not email or "@" not in email:
+            return None
+        return email.rsplit("@", 1)[1].lower()
+
+    @staticmethod
+    def _normalize_domain_from_url(value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = value.strip().lower()
+        normalized = re.sub(r"^[a-z]+://", "", normalized)
+        normalized = normalized.split("/", 1)[0]
+        normalized = normalized.split("?", 1)[0]
+        normalized = normalized.split("#", 1)[0]
+        normalized = normalized.split(":", 1)[0]
+        normalized = normalized.strip()
+        if normalized.startswith("www."):
+            normalized = normalized[4:]
+        return normalized or None
+
+    @staticmethod
+    def _html_to_text(html_body: str | None) -> str:
+        if not html_body:
+            return ""
+        text = BASE64_IMAGE_PATTERN.sub(" ", html_body)
+        text = SCRIPT_STYLE_PATTERN.sub(" ", text)
+        text = re.sub(r"(?i)mailto:", "", text)
+        text = TAG_PATTERN.sub(" ", text)
+        text = unescape(text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()[:12000]
+
+    @staticmethod
+    def _split_current_and_quoted_text(text: str) -> tuple[str, str]:
+        if not text:
+            return "", ""
+        marker_match = QUOTE_SPLIT_PATTERN.search(text)
+        if marker_match is None:
+            return text[:12000], ""
+        marker = marker_match.group(1).lower()
+        if marker_match.start() < 120 and marker not in {"-----original message-----", "weitergeleitete nachricht", "forwarded message"}:
+            return text[:12000], ""
+        index = marker_match.start()
+        return text[:index].strip()[:12000], text[index:].strip()[:12000]
+
+    @staticmethod
+    def _normalize_text_for_search(value: str | None) -> str:
+        if not value:
+            return ""
+        normalized = unicodedata.normalize("NFKC", value).lower()
+        normalized = normalized.replace("ß", "ss")
+        normalized = NAME_TITLES_PATTERN.sub(" ", normalized)
+        normalized = re.sub(r"[^\w\s@]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
+    @staticmethod
+    def _normalize_company_name(value: str | None) -> str:
+        normalized = CampaignContactService._normalize_text_for_search(value)
+        normalized = LEGAL_FORM_PATTERN.sub(" ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
 
     @staticmethod
     def _compose_extraction_text(

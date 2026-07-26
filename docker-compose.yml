@@ -64,6 +64,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/bmw_agent_app
       TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/bmw_agent_test
       TZ: ${TZ}
+      APP_ENV: ${APP_ENV}
+      ALLOW_TEST_RESET: ${ALLOW_TEST_RESET}
+      TEST_RESET_TOKEN: ${TEST_RESET_TOKEN}
     volumes:
       - ./app:/app/app
       - ./tests:/app/tests
@@ -72,6 +75,8 @@ services:
       - ./data/bmw-agent:/app/data
     networks:
       - bmw-agent-network
+    env_file:
+      - .env
 
 networks:
   bmw-agent-network:

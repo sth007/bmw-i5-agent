@@ -37,6 +37,22 @@ class CampaignContactRepository:
         )
         return self.db.execute(statement).unique().scalar_one_or_none()
 
+    def get_by_campaign_and_dealer(
+        self,
+        campaign_id: UUID,
+        dealer_id: int,
+    ) -> CampaignDealerContact | None:
+        statement = (
+            select(CampaignDealerContact)
+            .options(joinedload(CampaignDealerContact.dealer))
+            .where(
+                CampaignDealerContact.campaign_id == campaign_id,
+                CampaignDealerContact.dealer_id == dealer_id,
+            )
+            .order_by(CampaignDealerContact.created_at.desc())
+        )
+        return self.db.execute(statement).unique().scalar_one_or_none()
+
     def list_by_campaign_dealer_ids(
         self,
         campaign_id: UUID,
@@ -49,6 +65,27 @@ class CampaignContactRepository:
             CampaignDealerContact.dealer_id.in_(dealer_ids),
         )
         return list(self.db.execute(statement).scalars())
+
+    def list_open_for_campaign(self, campaign_id: UUID) -> list[CampaignDealerContact]:
+        statement = (
+            select(CampaignDealerContact)
+            .options(joinedload(CampaignDealerContact.dealer))
+            .where(
+                CampaignDealerContact.campaign_id == campaign_id,
+                CampaignDealerContact.recipient_email.is_not(None),
+                CampaignDealerContact.status.in_(
+                    [
+                        "SENT",
+                        "REPLIED",
+                        "OFFER_EXTRACTED",
+                        "NEEDS_REVIEW",
+                        "SEND_STATE_UNKNOWN",
+                    ]
+                ),
+            )
+            .order_by(CampaignDealerContact.created_at.desc())
+        )
+        return list(self.db.execute(statement).unique().scalars())
 
     def list_pending_for_update(self, campaign_id: UUID, limit: int) -> list[CampaignDealerContact]:
         statement = (
@@ -119,25 +156,25 @@ class CampaignContactRepository:
         sender_email: str,
         campaign_id: UUID | None = None,
     ) -> list[CampaignDealerContact]:
-        statement = (
-            select(CampaignDealerContact)
-            .options(joinedload(CampaignDealerContact.dealer))
-            .where(
-                CampaignDealerContact.recipient_email.is_not(None),
-                CampaignDealerContact.status.in_(
-                    [
-                        "SENT",
-                        "REPLIED",
-                        "OFFER_EXTRACTED",
-                        "NEEDS_REVIEW",
-                        "SEND_STATE_UNKNOWN",
-                    ]
-                ),
-            )
+        contacts = self.list_open_for_campaign(campaign_id) if campaign_id is not None else list(
+            self.db.execute(
+                select(CampaignDealerContact)
+                .options(joinedload(CampaignDealerContact.dealer))
+                .where(
+                    CampaignDealerContact.recipient_email.is_not(None),
+                    CampaignDealerContact.status.in_(
+                        [
+                            "SENT",
+                            "REPLIED",
+                            "OFFER_EXTRACTED",
+                            "NEEDS_REVIEW",
+                            "SEND_STATE_UNKNOWN",
+                        ]
+                    ),
+                )
+                .order_by(CampaignDealerContact.created_at.desc())
+            ).unique().scalars()
         )
-        if campaign_id is not None:
-            statement = statement.where(CampaignDealerContact.campaign_id == campaign_id)
-        contacts = list(self.db.execute(statement).unique().scalars())
         target = sender_email.strip().lower()
         return [
             contact
