@@ -77,8 +77,12 @@ class CampaignService:
         dealers = dealer_selection_service.select_for_campaign(payload.dealer_limit)
 
         customer_name = payload.customer.name.strip()
-        customer_email = payload.customer.email
-        customer_phone = payload.customer.phone
+        customer_email = str(payload.customer.email) if payload.customer.email else None
+        customer_phone = payload.customer.phone.strip() if payload.customer.phone else None
+        campaign.customer_name = customer_name
+        campaign.customer_email = customer_email
+        campaign.customer_phone = customer_phone
+        self.repository.commit()
 
         email_template_service = EmailTemplateService()
         email_previews = [
@@ -91,6 +95,7 @@ class CampaignService:
                 customer_name=customer_name,
                 customer_email=customer_email,
                 customer_phone=customer_phone,
+                configuration_items=self._format_configuration_items(campaign.configuration),
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()
@@ -182,8 +187,12 @@ class CampaignService:
         customer_phone = None
         if customer is not None:
             customer_name = customer.name.strip()
-            customer_email = customer.email
-            customer_phone = customer.phone
+            customer_email = str(customer.email) if customer.email else None
+            customer_phone = customer.phone.strip() if customer.phone else None
+            campaign.customer_name = customer_name
+            campaign.customer_email = customer_email
+            campaign.customer_phone = customer_phone
+            self.repository.commit()
 
         email_template_service = EmailTemplateService()
         email_previews = [
@@ -196,6 +205,7 @@ class CampaignService:
                 customer_name=customer_name,
                 customer_email=customer_email,
                 customer_phone=customer_phone,
+                configuration_items=self._format_configuration_items(campaign.configuration),
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()
@@ -277,6 +287,19 @@ class CampaignService:
             display_label=item.display_label.strip() if item.display_label else None,
             is_mandatory=item.is_mandatory,
         )
+
+    @staticmethod
+    def _format_configuration_items(configuration: CampaignConfiguration | None) -> list[str]:
+        if configuration is None:
+            return []
+        items: list[str] = []
+        for requirement in configuration.requirements:
+            label = (requirement.display_label or requirement.feature_key).strip()
+            if requirement.feature_value:
+                items.append(f"{label}: {requirement.feature_value.strip()}")
+            else:
+                items.append(label)
+        return items
 
     @staticmethod
     def extract_config_id(config_url: str | None) -> str | None:

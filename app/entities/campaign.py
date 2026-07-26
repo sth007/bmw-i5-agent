@@ -35,6 +35,9 @@ class Campaign(Base):
         server_default="DRAFT",
         index=True,
     )
+    customer_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    customer_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

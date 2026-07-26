@@ -33,6 +33,7 @@ class EmailTemplateService:
         customer_name: str,
         customer_email: str | None = None,
         customer_phone: str | None = None,
+        configuration_items: list[str] | None = None,
         language: str = "de",
     ) -> EmailPreview:
         subject_template_name = f"campaign_request_{language}_subject.j2"
@@ -44,6 +45,7 @@ class EmailTemplateService:
             "customer_name": customer_name.strip() or DEFAULT_CUSTOMER_NAME,
             "customer_email": self._clean_optional_value(customer_email),
             "customer_phone": self._clean_optional_value(customer_phone),
+            "configuration_items": [item.strip() for item in (configuration_items or []) if item and item.strip()],
         }
 
         try:

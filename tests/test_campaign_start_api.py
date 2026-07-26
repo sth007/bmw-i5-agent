@@ -270,3 +270,66 @@ def test_create_and_start_campaign_persists_configuration_and_returns_previews(c
     assert campaign["configuration"]["model"] == "BMW i5 Touring"
     assert campaign["configuration"]["payment_preference"] == "cash"
     assert len(campaign["configuration"]["requirements"]) == 2
+
+
+def test_claim_contacts_uses_persisted_customer_and_configuration_in_email(client) -> None:
+    dealer_import_response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-claim-config-001",
+                "name": "Dealer 1",
+                "city": "Stuttgart",
+                "email": "dealer1@example.com",
+                "is_published": True,
+            }
+        ],
+    )
+    assert dealer_import_response.status_code == 200
+
+    create_response = client.post(
+        "/api/campaigns/create-and-start",
+        json={
+            "campaign_name": "BMW i5 Zaour",
+            "dealer_limit": 1,
+            "customer": {
+                "name": "Zaour Assadov",
+                "email": "zaour.ludwigsburger@anaxo.de",
+                "phone": "+49 176 99791071",
+            },
+            "configuration": {
+                "configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                "model": "BMW i5 Touring",
+                "variant": "eDrive40",
+                "list_price": 76600,
+                "maximum_target_price": 57000,
+                "payment_preference": "cash",
+                "requirements": [
+                    {
+                        "feature_key": "vehicle.variant",
+                        "feature_value": "BMW i5 eDrive40 Touring",
+                        "display_label": "Variante",
+                        "is_mandatory": True,
+                    },
+                    {
+                        "feature_key": "exterior.color",
+                        "feature_value": "Sophistograu Brillanteffekt metallic",
+                        "display_label": "Außenfarbe",
+                        "is_mandatory": True,
+                    },
+                ],
+            },
+        },
+    )
+    assert create_response.status_code == 201
+    campaign_id = create_response.json()["campaign_id"]
+
+    claim_response = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    )
+    assert claim_response.status_code == 200
+    body = claim_response.json()["contacts"][0]["body"]
+    assert "Zaour Assadov" in body
+    assert "Variante: BMW i5 eDrive40 Touring" in body
+    assert "Außenfarbe: Sophistograu Brillanteffekt metallic" in body

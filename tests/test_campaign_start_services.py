@@ -42,6 +42,10 @@ def test_email_template_service_renders_subject_and_body() -> None:
         customer_name="Max Mustermann",
         customer_email="max.mustermann@example.de",
         customer_phone=None,
+        configuration_items=[
+            "Variante: BMW i5 eDrive40 Touring",
+            "Außenfarbe: Sophistograu Brillanteffekt metallic",
+        ],
     )
 
     assert preview.dealer_id == 143
@@ -49,6 +53,8 @@ def test_email_template_service_renders_subject_and_body() -> None:
     assert preview.to == "bmw-stuttgart@bmw.de"
     assert preview.subject == "Anfrage zu meiner BMW Wunschkonfiguration"
     assert "https://configure.bmw.de/de_DE/configid/chtwyiio" in preview.body
+    assert "Variante: BMW i5 eDrive40 Touring" in preview.body
+    assert "Außenfarbe: Sophistograu Brillanteffekt metallic" in preview.body
     assert "Max Mustermann" in preview.body
     assert "BMW AG Niederlassung Stuttgart" in preview.body
     assert "None" not in preview.body

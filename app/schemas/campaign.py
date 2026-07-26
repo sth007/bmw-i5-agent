@@ -383,6 +383,7 @@ class InboundOfferExtractionResponse(BaseModel):
     message_type: str
     confidence: Decimal
     offer: dict | None
+    price_comparison: dict | None = None
     reason: str | None
     status: str
     gross_final_price: Decimal | None

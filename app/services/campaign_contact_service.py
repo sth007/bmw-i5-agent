@@ -32,8 +32,10 @@ from app.schemas.campaign import (
 )
 from app.services.campaign_comparison_service import CampaignComparisonService
 from app.services.dealer_selection_service import DealerSelectionService
+from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.single_campaign_service import MultipleCampaignsError, SingleCampaignService
+from app.entities.dealer_offer_feature import DealerOfferFeature
 
 
 CONTACTABLE_STATUSES = {
@@ -73,6 +75,7 @@ class CampaignContactService:
         self.offer_repository = DealerOfferRepository(db)
         self.inbound_repository = InboundEmailRepository(db)
         self.email_template_service = EmailTemplateService()
+        self.feature_normalizer = FeatureNormalizationService()
         self.single_campaign_service = SingleCampaignService(db)
 
     def claim_contacts(
@@ -107,7 +110,10 @@ class CampaignContactService:
                 config_url=campaign.config_url or "",
                 dealer_name=dealer.name,
                 dealer_email=dealer.email or "",
-                customer_name=DEFAULT_CUSTOMER_NAME,
+                customer_name=(campaign.customer_name or DEFAULT_CUSTOMER_NAME),
+                customer_email=campaign.customer_email,
+                customer_phone=campaign.customer_phone,
+                configuration_items=self._format_configuration_items(campaign),
             )
             subject = self._build_subject(campaign_id, rendered.subject)
             effective_to = payload.test_recipient.strip() if payload.test_mode and payload.test_recipient else (dealer.email or "").strip()
@@ -1851,6 +1857,8 @@ class CampaignContactService:
         offer.extraction_notes = analysis["reason"]
         offer.raw_extraction = self._serialize_json_value(analysis)
         offer.extracted_at = datetime.now(UTC)
+        campaign = self.campaign_repository.get(inbound_email.campaign_id) if inbound_email.campaign_id is not None else None
+        offer.features = self._extract_offer_features(campaign, text)
         if existing_offer is None:
             self.offer_repository.add(offer)
         return offer
@@ -1861,12 +1869,19 @@ class CampaignContactService:
         analysis: dict,
         offer_record: DealerOffer | None,
     ) -> InboundOfferExtractionResponse:
+        offer_payload = self._serialize_json_value(analysis["offer"])
+        price_comparison = self._build_price_comparison(inbound_email, offer_record)
+        if offer_payload is not None:
+            offer_payload["configuration"] = self._build_offer_configuration(inbound_email, offer_record)
+            offer_payload["price_comparison"] = price_comparison
+
         return InboundOfferExtractionResponse(
             inbound_email_id=inbound_email.id,
             processing_result=analysis["processing_result"],
             message_type=analysis["message_type"],
             confidence=analysis["confidence"],
-            offer=self._serialize_json_value(analysis["offer"]),
+            offer=offer_payload,
+            price_comparison=price_comparison,
             reason=analysis["reason"],
             status=analysis["processing_result"],
             gross_final_price=analysis["gross_final_price"],
@@ -1932,6 +1947,163 @@ class CampaignContactService:
         if isinstance(value, list):
             return [CampaignContactService._serialize_json_value(item) for item in value]
         return value
+
+    def _build_offer_configuration(
+        self,
+        inbound_email: InboundEmail,
+        offer_record: DealerOffer | None,
+    ) -> dict | None:
+        campaign = self.campaign_repository.get(inbound_email.campaign_id) if inbound_email.campaign_id is not None else None
+        configuration = getattr(campaign, "configuration", None)
+        extracted = self._extract_actual_offer_values(offer_record.raw_response if offer_record is not None else "")
+
+        requested = None
+        if configuration is not None:
+            requested = {
+                "model": configuration.model,
+                "variant": configuration.variant,
+                "configuration_url": configuration.configuration_url,
+                "requirements": [
+                    {
+                        "feature_key": requirement.feature_key,
+                        "feature_value": requirement.feature_value,
+                        "display_label": requirement.display_label,
+                        "is_mandatory": requirement.is_mandatory,
+                    }
+                    for requirement in configuration.requirements
+                ],
+            }
+
+        extracted_payload = extracted or None
+        if requested is None and extracted_payload is None:
+            return None
+        return {
+            "requested": requested,
+            "extracted": extracted_payload,
+        }
+
+    def _build_price_comparison(
+        self,
+        inbound_email: InboundEmail,
+        offer_record: DealerOffer | None,
+    ) -> dict | None:
+        if inbound_email.campaign_id is None or offer_record is None or offer_record.total_price is None:
+            return None
+
+        offers = [
+            item
+            for item in self.offer_repository.list_by_campaign(inbound_email.campaign_id)
+            if item.total_price is not None
+        ]
+        if not offers:
+            return None
+
+        current_price = offer_record.total_price
+        previous_prices = [item.total_price for item in offers if item.id != offer_record.id and item.total_price is not None]
+        previous_lowest_price = min(previous_prices) if previous_prices else None
+        lowest_overall_price = min(item.total_price for item in offers if item.total_price is not None)
+        tied_lowest_count = sum(1 for item in offers if item.total_price == lowest_overall_price)
+
+        return {
+            "current_offer_price": current_price,
+            "previous_lowest_price": previous_lowest_price,
+            "lowest_price_in_campaign": lowest_overall_price,
+            "has_previous_offers": bool(previous_prices),
+            "matches_or_beats_previous_lowest": (
+                None if previous_lowest_price is None else current_price <= previous_lowest_price
+            ),
+            "lower_than_previous_lowest": (
+                previous_lowest_price is not None and current_price < previous_lowest_price
+            ),
+            "equal_to_previous_lowest": (
+                previous_lowest_price is not None and current_price == previous_lowest_price
+            ),
+            "is_lowest_overall": current_price == lowest_overall_price,
+            "is_tied_lowest_overall": current_price == lowest_overall_price and tied_lowest_count > 1,
+        }
+
+    def _extract_offer_features(self, campaign, text: str) -> list[DealerOfferFeature]:
+        if campaign is None or campaign.configuration is None:
+            return []
+
+        normalized_text = self.feature_normalizer.normalize_value(text) or ""
+        actual_values = self._extract_actual_offer_values(text)
+        features: list[DealerOfferFeature] = []
+        seen_keys: set[str] = set()
+
+        for requirement in campaign.configuration.requirements:
+            actual_value = self._resolve_offer_feature_value(requirement, normalized_text, actual_values)
+            if actual_value is None:
+                continue
+            normalized_key, normalized_value = self.feature_normalizer.normalize_feature(
+                requirement.feature_key,
+                actual_value,
+            )
+            if normalized_key in seen_keys:
+                continue
+            seen_keys.add(normalized_key)
+            features.append(
+                DealerOfferFeature(
+                    feature_key=requirement.feature_key,
+                    feature_value=actual_value,
+                    normalized_key=normalized_key,
+                    normalized_value=normalized_value,
+                    display_label=requirement.display_label,
+                    is_available=True,
+                )
+            )
+        return features
+
+    def _resolve_offer_feature_value(self, requirement, normalized_text: str, actual_values: dict[str, str | None]) -> str | None:
+        expected_value = requirement.feature_value.strip() if requirement.feature_value else None
+        expected_normalized = requirement.normalized_value or self.feature_normalizer.normalize_value(expected_value)
+        if expected_normalized and expected_normalized in normalized_text:
+            return expected_value
+
+        key_blob = self.feature_normalizer.normalize_key(
+            f"{requirement.feature_key} {(requirement.display_label or '')}"
+        )
+        if any(token in key_blob for token in ["variant", "drive", "antrieb"]):
+            return actual_values.get("variant")
+        if any(token in key_blob for token in ["karosserie", "body"]):
+            return actual_values.get("body")
+        if "modellcode" in key_blob or key_blob.endswith("_code"):
+            return actual_values.get("model_code")
+        if "modell" in key_blob or "model" in key_blob:
+            return actual_values.get("model_name")
+        return None
+
+    @staticmethod
+    def _extract_actual_offer_values(text: str) -> dict[str, str | None]:
+        match = re.search(
+            r"(?im)^\s*(?:BMW\s+)?(?P<series>i5)\s+(?P<variant>eDrive40|xDrive40)\s+(?P<body>Touring)\s*(?:\((?P<code>[A-Z0-9]+)[^)]*\))?",
+            text,
+        )
+        if match is None:
+            return {}
+        series = match.group("series")
+        variant = match.group("variant")
+        body = match.group("body")
+        return {
+            "model_name": f"BMW {series} {variant} {body}",
+            "variant": variant,
+            "body": body,
+            "model_code": match.group("code"),
+        }
+
+    @staticmethod
+    def _format_configuration_items(campaign) -> list[str]:
+        configuration = getattr(campaign, "configuration", None)
+        if configuration is None:
+            return []
+        items: list[str] = []
+        for requirement in configuration.requirements:
+            label = (requirement.display_label or requirement.feature_key).strip()
+            if requirement.feature_value:
+                items.append(f"{label}: {requirement.feature_value.strip()}")
+            else:
+                items.append(label)
+        return items
 
     @staticmethod
     def _extract_amounts(text: str) -> list[dict]:

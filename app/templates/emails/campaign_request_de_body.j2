@@ -12,6 +12,15 @@ Meine gewünschte Fahrzeugkonfiguration finden Sie unter folgendem BMW-Konfigura
 
 Sollte der Link nicht funktionieren, lasse ich Ihnen die Konfiguration selbstverständlich gerne auch in einer anderen Form zukommen.
 
+{% if configuration_items %}
+Zur Orientierung die ausgewählte Konfiguration in Textform:
+
+{% for item in configuration_items %}
+- {{ item }}
+{% endfor %}
+
+{% endif %}
+
 Ich freue mich über Ihr Angebot mit folgenden Informationen:
 
 - Endpreis inklusive aller Rabatte

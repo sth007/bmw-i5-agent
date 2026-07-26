@@ -1215,6 +1215,279 @@ def test_extract_offer_from_full_bmw_pdf_ignores_co2_and_leasing_examples(client
     assert body["offer"]["quality"]["evidence"][0]["source"] == "attachment_text"
 
 
+def test_extract_offer_marks_variant_mismatch_as_incompatible_in_comparison(client) -> None:
+    _import_dealers(client)
+    create_campaign_response = client.post(
+        "/campaigns",
+        json={
+            "name": "BMW i5 eDrive40 Vergleich",
+            "configuration": {
+                "configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                "model": "BMW i5 Touring",
+                "variant": "eDrive40",
+                "maximum_target_price": "70000.00",
+                "payment_preference": "cash",
+                "requirements": [
+                    {
+                        "feature_key": "vehicle.variant",
+                        "feature_value": "eDrive40",
+                        "display_label": "Variante",
+                        "is_mandatory": True,
+                    }
+                ],
+            },
+        },
+    )
+    assert create_campaign_response.status_code == 201
+    campaign_id = create_campaign_response.json()["id"]
+
+    claim = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-variant", "test_mode": False},
+    ).json()["contacts"][0]
+    client.post(
+        f"/api/campaign-contacts/{claim['contact_id']}/sent",
+        json={
+            "provider": "gmail",
+            "provider_message_id": "gmail-message-variant-mismatch",
+            "provider_thread_id": "gmail-thread-variant-mismatch",
+            "internet_message_id": "<message-variant-mismatch@example.test>",
+            "sent_to": claim["effective_to"],
+            "test_mode": False,
+        },
+    )
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-variant-mismatch",
+            "provider_thread_id": "gmail-thread-variant-mismatch",
+            "sender_email": "stuttgart@bmw.de",
+            "subject": claim["subject"],
+            "text_body": "Im Anhang finden Sie unser Angebot.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    ).json()
+
+    extraction = client.post(
+        f"/api/inbound-emails/{inbound['id']}/extract-offer",
+        json={
+            "attachment_text": [
+                (
+                    "Angebot Nr. 20271449 vom 20.07.2026\n"
+                    "i5 xDrive40 Touring (51HH; Neuwagen)\n"
+                    "Gesamtpreis 61.258,21\n"
+                    "Der Bruttolistenpreis beträgt 79.945,01 EUR.\n"
+                )
+            ],
+            "force_reextract": True,
+        },
+    )
+    assert extraction.status_code == 200
+
+    comparison = client.get(f"/campaigns/{campaign_id}/comparison")
+    assert comparison.status_code == 200
+    ranked_offer = comparison.json()["ranked_offers"][0]
+    assert ranked_offer["category"] == "incompatible"
+    assert ranked_offer["matches"][0]["feature_key"] == "vehicle.variant"
+    assert ranked_offer["matches"][0]["expected_value"] == "eDrive40"
+    assert ranked_offer["matches"][0]["actual_value"] == "xDrive40"
+    assert ranked_offer["matches"][0]["status"] == "incompatible"
+
+
+def test_extract_offer_includes_configuration_and_lower_price_signal(client) -> None:
+    _import_dealers(client)
+    create_campaign_response = client.post(
+        "/campaigns",
+        json={
+            "name": "BMW i5 Preisvergleich",
+            "configuration": {
+                "configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                "model": "BMW i5 Touring",
+                "variant": "eDrive40",
+                "maximum_target_price": "70000.00",
+                "payment_preference": "cash",
+                "requirements": [
+                    {
+                        "feature_key": "vehicle.variant",
+                        "feature_value": "eDrive40",
+                        "display_label": "Variante",
+                        "is_mandatory": True,
+                    },
+                    {
+                        "feature_key": "vehicle.body",
+                        "feature_value": "Touring",
+                        "display_label": "Karosserie",
+                        "is_mandatory": True,
+                    },
+                ],
+            },
+        },
+    )
+    assert create_campaign_response.status_code == 201
+    campaign_id = create_campaign_response.json()["id"]
+
+    claims = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-price-compare", "test_mode": False},
+    )
+    assert claims.status_code == 200
+    contacts = claims.json()["contacts"]
+    assert len(contacts) == 2
+
+    _mark_contact_sent(client, contacts[0], "price-compare-1")
+    _mark_contact_sent(client, contacts[1], "price-compare-2")
+
+    first_inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-price-compare-1",
+            "provider_thread_id": "gmail-thread-price-compare-1",
+            "sender_email": contacts[0]["recipient_email"],
+            "subject": contacts[0]["subject"],
+            "text_body": "Im Anhang finden Sie unser Angebot.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert first_inbound.status_code == 201
+
+    first_extraction = client.post(
+        f"/api/inbound-emails/{first_inbound.json()['id']}/extract-offer",
+        json={
+            "attachment_text": [
+                (
+                    "Angebot Nr. 20271449 vom 20.07.2026\n"
+                    "i5 eDrive40 Touring (51HH; Neuwagen)\n"
+                    "Gesamtpreis 61.500,00\n"
+                    "Der Bruttolistenpreis beträgt 79.945,01 EUR.\n"
+                )
+            ],
+            "force_reextract": True,
+        },
+    )
+    assert first_extraction.status_code == 200
+
+    second_inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-price-compare-2",
+            "provider_thread_id": "gmail-thread-price-compare-2",
+            "sender_email": contacts[1]["recipient_email"],
+            "subject": contacts[1]["subject"],
+            "text_body": "Im Anhang finden Sie unser Angebot.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert second_inbound.status_code == 201
+
+    second_extraction = client.post(
+        f"/api/inbound-emails/{second_inbound.json()['id']}/extract-offer",
+        json={
+            "attachment_text": [
+                (
+                    "Angebot Nr. 20271450 vom 21.07.2026\n"
+                    "i5 eDrive40 Touring (51HH; Neuwagen)\n"
+                    "Gesamtpreis 61.258,21\n"
+                    "Der Bruttolistenpreis beträgt 79.945,01 EUR.\n"
+                )
+            ],
+            "force_reextract": True,
+        },
+    )
+    assert second_extraction.status_code == 200
+    body = second_extraction.json()
+
+    assert body["offer"]["configuration"]["requested"]["model"] == "BMW i5 Touring"
+    assert body["offer"]["configuration"]["requested"]["variant"] == "eDrive40"
+    assert body["offer"]["configuration"]["requested"]["requirements"][0]["feature_key"] == "vehicle.variant"
+    assert body["offer"]["configuration"]["extracted"]["variant"] == "eDrive40"
+    assert body["offer"]["configuration"]["extracted"]["body"] == "Touring"
+    assert body["offer"]["price_comparison"]["previous_lowest_price"] == "61500.00"
+    assert body["offer"]["price_comparison"]["lowest_price_in_campaign"] == "61258.21"
+    assert body["offer"]["price_comparison"]["matches_or_beats_previous_lowest"] is True
+    assert body["offer"]["price_comparison"]["lower_than_previous_lowest"] is True
+    assert body["offer"]["price_comparison"]["equal_to_previous_lowest"] is False
+    assert body["offer"]["price_comparison"]["is_lowest_overall"] is True
+    assert body["price_comparison"]["matches_or_beats_previous_lowest"] is True
+
+
+def test_extract_offer_flags_equal_price_as_matching_lowest(client) -> None:
+    _import_dealers(client)
+    campaign_id = _create_campaign(client)
+    claims = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 2, "reservation_owner": "n8n-price-equal", "test_mode": False},
+    )
+    assert claims.status_code == 200
+    contacts = claims.json()["contacts"]
+    assert len(contacts) == 2
+
+    _mark_contact_sent(client, contacts[0], "price-equal-1")
+    _mark_contact_sent(client, contacts[1], "price-equal-2")
+
+    first_inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-price-equal-1",
+            "provider_thread_id": "gmail-thread-price-equal-1",
+            "sender_email": contacts[0]["recipient_email"],
+            "subject": contacts[0]["subject"],
+            "text_body": "Endpreis 61.258,21 EUR",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert first_inbound.status_code == 201
+    assert (
+        client.post(
+            f"/api/inbound-emails/{first_inbound.json()['id']}/extract-offer",
+            json={"attachment_text": [], "force_reextract": True},
+        ).status_code
+        == 200
+    )
+
+    second_inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-price-equal-2",
+            "provider_thread_id": "gmail-thread-price-equal-2",
+            "sender_email": contacts[1]["recipient_email"],
+            "subject": contacts[1]["subject"],
+            "text_body": "Endpreis 61.258,21 EUR",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    )
+    assert second_inbound.status_code == 201
+
+    second_extraction = client.post(
+        f"/api/inbound-emails/{second_inbound.json()['id']}/extract-offer",
+        json={"attachment_text": [], "force_reextract": True},
+    )
+    assert second_extraction.status_code == 200
+    comparison = second_extraction.json()["price_comparison"]
+
+    assert comparison["previous_lowest_price"] == "61258.21"
+    assert comparison["matches_or_beats_previous_lowest"] is True
+    assert comparison["lower_than_previous_lowest"] is False
+    assert comparison["equal_to_previous_lowest"] is True
+    assert comparison["is_lowest_overall"] is True
+    assert comparison["is_tied_lowest_overall"] is True
+
+
 def test_extract_offer_treats_leasing_example_as_irrelevant(client) -> None:
     _import_dealers(client)
     campaign_id = _create_campaign(client)
