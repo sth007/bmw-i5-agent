@@ -12,6 +12,7 @@ from app.entities.configuration_requirement import ConfigurationRequirement
 from app.repositories.campaign_repository import CampaignRepository
 from app.schemas.campaign import (
     CampaignCreate,
+    CampaignCreateAndStartRequest,
     CampaignCustomerInput,
     CampaignStartResponse,
     CampaignStatusPatch,
@@ -59,6 +60,72 @@ class CampaignService:
             raise
 
         return self.repository.get(campaign.id) or campaign
+
+    def create_and_start_campaign(self, payload: CampaignCreateAndStartRequest) -> CampaignStartResponse:
+        cleaned_config_url = (payload.configuration.configuration_url or "").strip()
+        if not cleaned_config_url:
+            raise ValueError("configuration.configuration_url must not be blank")
+
+        create_payload = CampaignCreate(
+            name=payload.campaign_name,
+            notes=payload.notes,
+            configuration=payload.configuration,
+        )
+        campaign = self.create_campaign(create_payload)
+
+        dealer_selection_service = DealerSelectionService(self.repository.db)
+        dealers = dealer_selection_service.select_for_campaign(payload.dealer_limit)
+
+        customer_name = payload.customer.name.strip()
+        customer_email = payload.customer.email
+        customer_phone = payload.customer.phone
+
+        email_template_service = EmailTemplateService()
+        email_previews = [
+            email_template_service.render_campaign_request(
+                dealer_id=dealer.id,
+                campaign_name=campaign.name,
+                config_url=cleaned_config_url,
+                dealer_name=dealer.name,
+                dealer_email=dealer.email or "",
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
+            )
+            for dealer in dealers
+            if dealer.email and dealer.email.strip()
+        ]
+        warnings: list[str] = []
+        if not dealers:
+            warnings.append("No eligible dealers with a valid email address were found.")
+
+        return CampaignStartResponse(
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            config_url=cleaned_config_url,
+            config_id=campaign.config_id or self.extract_config_id(cleaned_config_url) or "",
+            status=campaign.status,
+            dealers=[
+                {
+                    "dealer_id": dealer.id,
+                    "name": dealer.name,
+                    "city": dealer.city,
+                    "email": dealer.email or "",
+                }
+                for dealer in dealers
+            ],
+            email_previews=[
+                {
+                    "dealer_id": preview.dealer_id,
+                    "dealer_name": preview.dealer_name,
+                    "to": preview.to,
+                    "subject": preview.subject,
+                    "body": preview.body,
+                }
+                for preview in email_previews
+            ],
+            warnings=warnings,
+        )
 
     def start_campaign(
         self,

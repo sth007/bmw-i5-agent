@@ -194,3 +194,79 @@ def test_campaign_from_config_returns_warning_when_no_eligible_dealers_exist(cli
     assert payload["dealers"] == []
     assert payload["email_previews"] == []
     assert payload["warnings"] == ["No eligible dealers with a valid email address were found."]
+
+
+def test_create_and_start_campaign_persists_configuration_and_returns_previews(client) -> None:
+    dealer_import_response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-create-start-001",
+                "name": "Dealer 1",
+                "city": "Stuttgart",
+                "email": "dealer1@example.com",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-create-start-002",
+                "name": "Dealer 2",
+                "city": "Muenchen",
+                "email": "dealer2@example.com",
+                "is_published": True,
+            },
+        ],
+    )
+    assert dealer_import_response.status_code == 200
+
+    response = client.post(
+        "/api/campaigns/create-and-start",
+        json={
+            "campaign_name": "BMW i5 Zaour",
+            "dealer_limit": 2,
+            "customer": {
+                "name": "Zaour Assadov",
+                "email": "zaour.ludwigsburger@anaxo.de",
+                "phone": "+49 176 99791071",
+            },
+            "notes": "Nur Barkauf-Angebote relevant.",
+            "configuration": {
+                "configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                "model": "BMW i5 Touring",
+                "variant": "eDrive40",
+                "list_price": 74820,
+                "maximum_target_price": 57000,
+                "payment_preference": "cash",
+                "requirements": [
+                    {
+                        "feature_key": "must_have.color",
+                        "feature_value": "Cape York Gruen",
+                        "display_label": "Farbe",
+                        "is_mandatory": True,
+                    },
+                    {
+                        "feature_key": "optional.audio",
+                        "feature_value": "harman/kardon",
+                        "display_label": "Sound",
+                        "is_mandatory": False,
+                    },
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["campaign_name"] == "BMW i5 Zaour"
+    assert payload["config_id"] == "chtwyiio"
+    assert len(payload["dealers"]) == 2
+    assert len(payload["email_previews"]) == 2
+    assert "Zaour Assadov" in payload["email_previews"][0]["body"]
+
+    campaign_response = client.get(f"/campaigns/{payload['campaign_id']}")
+    assert campaign_response.status_code == 200
+    campaign = campaign_response.json()
+    assert campaign["name"] == "BMW i5 Zaour"
+    assert campaign["notes"] == "Nur Barkauf-Angebote relevant."
+    assert campaign["configuration"]["model"] == "BMW i5 Touring"
+    assert campaign["configuration"]["payment_preference"] == "cash"
+    assert len(campaign["configuration"]["requirements"]) == 2

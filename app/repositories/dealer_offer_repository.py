@@ -25,6 +25,14 @@ class DealerOfferRepository:
         )
         return self.db.execute(statement).unique().scalar_one_or_none()
 
+    def get_by_inbound_email(self, inbound_email_id: UUID) -> DealerOffer | None:
+        statement = (
+            select(DealerOffer)
+            .options(joinedload(DealerOffer.features))
+            .where(DealerOffer.inbound_email_id == inbound_email_id)
+        )
+        return self.db.execute(statement).unique().scalar_one_or_none()
+
     def list_by_campaign(self, campaign_id: UUID) -> list[DealerOffer]:
         statement = (
             select(DealerOffer)

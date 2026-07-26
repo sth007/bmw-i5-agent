@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -50,8 +51,12 @@ class InboundEmail(Base):
     text_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     html_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    processing_status: Mapped[str] = mapped_column(String(32), nullable=False, default="RECEIVED", index=True)
+    processing_status: Mapped[str] = mapped_column(String(32), nullable=False, default="REGISTERED", index=True)
     matching_status: Mapped[str] = mapped_column(String(32), nullable=False, default="UNMATCHED", index=True)
+    message_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extraction_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    extraction_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     raw_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

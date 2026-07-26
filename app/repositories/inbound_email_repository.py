@@ -38,7 +38,7 @@ class InboundEmailRepository:
 
     def list_review_queue(self, campaign_id: UUID | None) -> list[InboundEmail]:
         statement = select(InboundEmail).where(
-            InboundEmail.processing_status.in_(["NEEDS_REVIEW", "FAILED"]),
+            InboundEmail.processing_status.in_(["NEEDS_REVIEW", "EXTRACTION_FAILED"]),
         )
         if campaign_id is not None:
             statement = statement.where(InboundEmail.campaign_id == campaign_id)

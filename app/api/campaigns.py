@@ -18,6 +18,7 @@ from app.schemas.campaign import (
     CampaignContactSentRequest,
     CampaignContactStateResponse,
     CampaignCreate,
+    CampaignCreateAndStartRequest,
     CampaignFromConfigRequest,
     CampaignStartRequest,
     CampaignStartResponse,
@@ -162,6 +163,23 @@ def create_campaign_from_config(
             dealer_limit=payload.dealer_limit,
             customer=payload.customer,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email template rendering failed.",
+        )
+
+
+@start_router.post("/create-and-start", response_model=CampaignStartResponse, status_code=status.HTTP_201_CREATED)
+def create_and_start_campaign(
+    payload: CampaignCreateAndStartRequest,
+    db: DatabaseSession,
+) -> CampaignStartResponse:
+    service = CampaignService(db)
+    try:
+        return service.create_and_start_campaign(payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RuntimeError:

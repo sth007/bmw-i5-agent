@@ -30,6 +30,7 @@ from app.schemas.campaign import (
     InboundOfferExtractionResponse,
     ReviewQueueItemResponse,
 )
+from app.services.campaign_comparison_service import CampaignComparisonService
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.single_campaign_service import MultipleCampaignsError, SingleCampaignService
@@ -202,7 +203,7 @@ class CampaignContactService:
         if contact is None and campaign_id is not None and dealer_id is not None:
             contact = self._ensure_inbound_contact(campaign_id, dealer_id, normalized_payload.received_at)
         contact_id = contact.id if contact else None
-        processing_status = "REGISTERED" if dealer_id is not None else "RECEIVED"
+        processing_status = "REGISTERED"
         if auto_campaign is not None and contact is None and dealer_id is None:
             if matching_status == "UNMATCHED":
                 matching_status = "NEEDS_DEALER_ASSIGNMENT"
@@ -295,70 +296,47 @@ class CampaignContactService:
         if inbound_email is None:
             raise LookupError("Inbound email not found")
 
-        text = self._compose_extraction_text(inbound_email, payload)
-        analysis = self._analyse_offer_text(text)
+        payload = payload or InboundOfferExtractionRequest()
+        if not payload.force_reextract:
+            existing_result = self._load_existing_extraction_result(inbound_email)
+            if existing_result is not None:
+                return existing_result
 
+        text = self._compose_extraction_text(inbound_email, payload)
+        attachment_present = self._has_attachment_text(inbound_email, payload)
+        analysis = self._precheck_non_offer(inbound_email, text) or self._analyse_offer_text(
+            text,
+            extracted_from_attachment=attachment_present,
+        )
         if inbound_email.campaign_id is None or inbound_email.dealer_id is None:
-            inbound_email.processing_status = "NEEDS_REVIEW"
-            inbound_email.matching_status = "UNMATCHED" if inbound_email.matching_status == "UNMATCHED" else inbound_email.matching_status
-            self.inbound_repository.commit()
-            return InboundOfferExtractionResponse(
-                inbound_email_id=inbound_email.id,
-                status="FAILED",
-                gross_final_price=None,
-                currency=None,
-                price_confidence=None,
-                needs_review=True,
-                review_reason="Inbound email could not be matched to a campaign contact.",
-                dealer_offer_id=None,
+            analysis = self._analysis(
+                processing_result="NEEDS_REVIEW",
+                message_type="UNCLEAR",
+                confidence=Decimal("0.55"),
+                reason="Inbound email could not be matched to a campaign contact.",
+                raw=analysis["raw"],
             )
 
-        offer = DealerOffer(
-            campaign_id=inbound_email.campaign_id,
-            dealer_id=inbound_email.dealer_id,
-            inbound_email_id=inbound_email.id,
-            dealer_name=inbound_email.contact.dealer.name if inbound_email.contact and inbound_email.contact.dealer else (inbound_email.sender_name or inbound_email.sender_email or "Unknown Dealer"),
-            source_type="email",
-            currency=analysis["currency"] or "EUR",
-            raw_response=text.strip() or "(empty email)",
-            total_price=analysis["gross_final_price"],
-            gross_final_price=analysis["gross_final_price"],
-            list_price=analysis["list_price"],
-            discount_amount=analysis["discount_amount"],
-            discount_percent=analysis["discount_percent"],
-            delivery_cost=analysis["delivery_cost"],
-            registration_cost=analysis["registration_cost"],
-            other_costs=analysis["other_costs"],
-            delivery_time_text=analysis["delivery_time_text"],
-            valid_until=analysis["valid_until"],
-            price_confidence=analysis["price_confidence"],
-            extraction_status=analysis["status"],
-            missing_fields=analysis["missing_fields"],
-            extraction_notes=analysis["review_reason"],
-            raw_extraction=self._serialize_json_value(analysis),
-            extracted_at=datetime.now(UTC),
-        )
-
+        offer_record = self.offer_repository.get_by_inbound_email(inbound_email.id)
         try:
-            self.offer_repository.add(offer)
-            inbound_email.processing_status = "NEEDS_REVIEW" if analysis["needs_review"] else "PROCESSED"
-            if inbound_email.contact is not None:
-                inbound_email.contact.status = "NEEDS_REVIEW" if analysis["needs_review"] else "OFFER_EXTRACTED"
+            self._apply_extraction_result(inbound_email, analysis)
+            if analysis["processing_result"] == "OFFER_EXTRACTED":
+                offer_record = self._upsert_offer_from_analysis(inbound_email, text, analysis, offer_record)
+                if inbound_email.campaign_id is not None:
+                    try:
+                        CampaignComparisonService(self.db).compare(inbound_email.campaign_id)
+                    except ValueError as exc:
+                        if str(exc) != "Campaign configuration is missing":
+                            raise
+            elif offer_record is not None:
+                self.db.delete(offer_record)
+                offer_record = None
             self.offer_repository.commit()
         except Exception:
             self.offer_repository.rollback()
             raise
 
-        return InboundOfferExtractionResponse(
-            inbound_email_id=inbound_email.id,
-            status=analysis["status"],
-            gross_final_price=analysis["gross_final_price"],
-            currency=analysis["currency"],
-            price_confidence=analysis["price_confidence"],
-            needs_review=analysis["needs_review"],
-            review_reason=analysis["review_reason"],
-            dealer_offer_id=offer.id,
-        )
+        return self._build_extraction_response(inbound_email, analysis, offer_record)
 
     def review_queue(self, campaign_id: UUID | None) -> list[ReviewQueueItemResponse]:
         items: list[ReviewQueueItemResponse] = []
@@ -676,6 +654,10 @@ class CampaignContactService:
             received_at=inbound_email.received_at,
             processing_status=inbound_email.processing_status,
             matching_status=inbound_email.matching_status,
+            message_type=inbound_email.message_type,
+            extraction_confidence=inbound_email.extraction_confidence,
+            extraction_reason=inbound_email.extraction_reason,
+            processed_at=inbound_email.processed_at,
             can_extract=inbound_email.campaign_id is not None and inbound_email.dealer_id is not None,
             created_at=inbound_email.created_at,
             updated_at=inbound_email.updated_at,
@@ -1326,22 +1308,72 @@ class CampaignContactService:
         return "\n\n".join(part for part in parts if part)
 
     @staticmethod
-    def _analyse_offer_text(text: str) -> dict:
+    def _has_attachment_text(
+        inbound_email: InboundEmail,
+        payload: InboundOfferExtractionRequest | None,
+    ) -> bool:
+        if payload and any(text and text.strip() for text in payload.attachment_text):
+            return True
+        metadata = inbound_email.raw_metadata or {}
+        attachment_text = metadata.get("attachment_text")
+        return isinstance(attachment_text, list) and any(str(item).strip() for item in attachment_text)
+
+    @staticmethod
+    def _analyse_offer_text(text: str, *, extracted_from_attachment: bool = False) -> dict:
         lowered = text.lower()
-        review_reason = None
-        if any(keyword in lowered for keyword in ["eingangsbestätigung", "eingangsbestaetigung", "danke für ihre anfrage", "wir melden uns"]):
+        normalized = CampaignContactService._normalize_text_for_matching(text)
+
+        if CampaignContactService._is_outbound_copy(normalized):
             return CampaignContactService._analysis(
-                status="ACKNOWLEDGEMENT_ONLY",
-                confidence=Decimal("0.20"),
-                needs_review=True,
-                review_reason="Acknowledgement only.",
+                processing_result="NO_OFFER",
+                message_type="OUTBOUND_COPY",
+                confidence=Decimal("1.00"),
             )
-        if "?" in text or any(keyword in lowered for keyword in ["bitte teilen sie", "barzahlung oder leasing", "barzahlung", "rückfrage", "rueckfrage"]):
+        if CampaignContactService._contains_any(
+            normalized,
+            [
+                "abwesenheitsnotiz",
+                "automatic reply",
+                "automatische antwort",
+                "out of office",
+                "ihre nachricht ist bei uns eingegangen",
+                "wir haben ihre nachricht erhalten",
+                "vielen dank fuer ihre anfrage. wir melden uns",
+            ],
+        ):
             return CampaignContactService._analysis(
-                status="QUESTION_FROM_DEALER",
-                confidence=Decimal("0.30"),
-                needs_review=True,
-                review_reason="Dealer asked a follow-up question.",
+                processing_result="NO_OFFER",
+                message_type="AUTO_REPLY",
+                confidence=Decimal("0.97"),
+                reason="Automatic acknowledgement without a concrete offer.",
+            )
+        if CampaignContactService._contains_any(
+            normalized,
+            [
+                "wir koennen derzeit kein angebot erstellen",
+                "das fahrzeug ist nicht verfuegbar",
+                "wir fuehren dieses modell nicht",
+                "leider koennen wir ihre anfrage nicht bearbeiten",
+            ],
+        ):
+            return CampaignContactService._analysis(
+                processing_result="NO_OFFER",
+                message_type="DECLINE",
+                confidence=Decimal("0.96"),
+                reason="Dealer declined or cannot provide an offer.",
+            )
+
+        structured_cash_offer = CampaignContactService._extract_bmw_cash_offer(
+            text,
+            extracted_from_attachment=extracted_from_attachment,
+        )
+        if structured_cash_offer is not None:
+            return CampaignContactService._analysis(
+                processing_result="OFFER_EXTRACTED",
+                message_type="OFFER",
+                confidence=structured_cash_offer["quality"]["confidence"],
+                offer=structured_cash_offer,
+                raw={"strategy": "structured_bmw_offer"},
             )
 
         amounts = CampaignContactService._extract_amounts(text)
@@ -1349,29 +1381,56 @@ class CampaignContactService:
         purchase_amounts = [amount for amount in amounts if amount["context"] != "lease"]
         final_amounts = [amount for amount in purchase_amounts if amount["label"] == "final"]
         candidate_amounts = final_amounts or purchase_amounts
+        looks_like_question = "?" in text or CampaignContactService._contains_any(
+            normalized,
+            [
+                "bitte teilen sie",
+                "barzahlung oder leasing",
+                "privat- oder firmenkauf",
+                "welche laufzeit",
+                "wie viele kilometer",
+                "bitte senden sie die konfiguration erneut",
+                "rueckfrage",
+            ],
+        )
+
+        lease_offer = CampaignContactService._extract_lease_offer(text)
 
         if len(candidate_amounts) == 0:
+            if looks_like_question:
+                return CampaignContactService._analysis(
+                    processing_result="NO_OFFER",
+                    message_type="QUESTION_FROM_DEALER",
+                    confidence=Decimal("0.97"),
+                    reason="Dealer asked follow-up questions without a concrete offer.",
+                )
+            if lease_offer is not None:
+                return CampaignContactService._analysis(
+                    processing_result="NO_OFFER",
+                    message_type="LEASING_OR_FINANCING_IRRELEVANT",
+                    confidence=Decimal("0.95"),
+                    reason="Leasing or financing examples are ignored for offer ranking.",
+                    raw={"lease_offer": lease_offer},
+                )
             return CampaignContactService._analysis(
-                status="NO_PRICE",
-                confidence=Decimal("0.10"),
-                needs_review=True,
-                review_reason="No plausible purchase price found.",
+                processing_result="NO_OFFER",
+                message_type="NO_COMMERCIAL_TERMS",
+                confidence=Decimal("0.93"),
+                reason="No concrete commercial offer data found.",
             )
         if len(candidate_amounts) > 1:
             top_values = {amount["value"] for amount in candidate_amounts[:3]}
             if len(top_values) > 1:
                 return CampaignContactService._analysis(
-                    status="AMBIGUOUS",
+                    processing_result="NEEDS_REVIEW",
+                    message_type="UNCLEAR",
                     confidence=Decimal("0.55"),
-                    needs_review=True,
-                    review_reason="Multiple plausible end prices found.",
+                    reason="Multiple plausible end prices found.",
                     raw={"candidate_prices": [str(amount["value"]) for amount in candidate_amounts[:5]]},
                 )
 
         chosen = candidate_amounts[0]
         confidence = Decimal("0.93") if chosen["label"] == "final" else Decimal("0.78")
-        status = "PRICE_EXTRACTED" if confidence >= Decimal("0.80") else "NEEDS_REVIEW"
-        needs_review = confidence < Decimal("0.80")
         list_price = next((item["value"] for item in purchase_amounts if item["label"] == "list"), None)
         discount_amount = list_price - chosen["value"] if list_price and list_price > chosen["value"] else None
         discount_percent = (
@@ -1379,15 +1438,61 @@ class CampaignContactService:
             if discount_amount and list_price
             else None
         )
+        cash_offer = {
+            "offer_type": "CASH",
+            "pricing": {
+                "currency": "EUR",
+                "list_price": list_price,
+                "discount_amount": discount_amount,
+                "discount_percent": discount_percent,
+                "vehicle_price": chosen["value"],
+                "transfer_cost": None,
+                "registration_cost": None,
+                "additional_costs": None,
+                "total_cash_price": chosen["value"],
+                "monthly_rate": None,
+                "down_payment": None,
+                "final_payment": None,
+                "annual_percentage_rate": None,
+                "term_months": None,
+                "annual_mileage_km": None,
+                "total_lease_cost": None,
+                "total_financing_cost": None,
+            },
+            "source": {
+                "extracted_from_email": not extracted_from_attachment,
+                "extracted_from_attachment": extracted_from_attachment,
+            },
+            "quality": {
+                "confidence": confidence,
+                "missing_fields": [],
+                "warnings": [],
+                "evidence": CampaignContactService._build_evidence(
+                    "pricing.total_cash_price",
+                    chosen["excerpt"],
+                    chosen["value"],
+                    source="attachment_text" if extracted_from_attachment else "email_text",
+                ),
+            },
+        }
+        if confidence < Decimal("0.80"):
+            return CampaignContactService._analysis(
+                processing_result="NEEDS_REVIEW",
+                message_type="UNCLEAR",
+                confidence=confidence,
+                reason="Price found, but the final offer price is not explicit enough.",
+                offer=cash_offer,
+                missing_fields=["pricing.total_cash_price"],
+                raw={
+                    "lease_candidates": [str(item["value"]) for item in lease_indicators],
+                    "purchase_candidates": [str(item["value"]) for item in purchase_amounts],
+                },
+            )
         return CampaignContactService._analysis(
-            status=status,
+            processing_result="OFFER_EXTRACTED",
+            message_type="OFFER",
             confidence=confidence,
-            needs_review=needs_review,
-            review_reason="Confidence below threshold." if needs_review else None,
-            gross_final_price=chosen["value"],
-            list_price=list_price,
-            discount_amount=discount_amount,
-            discount_percent=discount_percent,
+            offer=cash_offer,
             raw={
                 "lease_candidates": [str(item["value"]) for item in lease_indicators],
                 "purchase_candidates": [str(item["value"]) for item in purchase_amounts],
@@ -1397,34 +1502,426 @@ class CampaignContactService:
     @staticmethod
     def _analysis(
         *,
-        status: str,
+        processing_result: str,
+        message_type: str,
         confidence: Decimal,
-        needs_review: bool,
-        review_reason: str | None,
-        gross_final_price: Decimal | None = None,
-        list_price: Decimal | None = None,
-        discount_amount: Decimal | None = None,
-        discount_percent: Decimal | None = None,
+        reason: str | None = None,
+        offer: dict | None = None,
+        missing_fields: list[str] | None = None,
         raw: dict | None = None,
     ) -> dict:
+        pricing = offer.get("pricing", {}) if offer else {}
+        gross_final_price = pricing.get("total_cash_price") or pricing.get("vehicle_price")
+        needs_review = processing_result == "NEEDS_REVIEW"
         return {
-            "status": status,
-            "currency": "EUR" if gross_final_price is not None else None,
+            "processing_result": processing_result,
+            "message_type": message_type,
+            "status": processing_result,
+            "currency": pricing.get("currency"),
             "gross_final_price": gross_final_price,
-            "list_price": list_price,
-            "discount_amount": discount_amount,
-            "discount_percent": discount_percent,
+            "list_price": pricing.get("list_price"),
+            "discount_amount": pricing.get("discount_amount"),
+            "discount_percent": pricing.get("discount_percent"),
             "delivery_cost": None,
             "registration_cost": None,
             "other_costs": None,
             "delivery_time_text": None,
             "valid_until": None,
-            "price_confidence": confidence,
-            "missing_fields": [] if gross_final_price is not None else ["gross_final_price"],
+            "price_confidence": confidence if gross_final_price is not None else None,
+            "confidence": confidence,
+            "offer": offer,
+            "missing_fields": missing_fields or [],
             "needs_review": needs_review,
-            "review_reason": review_reason,
+            "review_reason": reason,
+            "reason": reason,
             "raw": raw or {},
         }
+
+    @staticmethod
+    def _normalize_text_for_matching(text: str) -> str:
+        normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return normalized.lower()
+
+    @staticmethod
+    def _contains_any(text: str, phrases: list[str]) -> bool:
+        return any(phrase in text for phrase in phrases)
+
+    @staticmethod
+    def _is_outbound_copy(text: str) -> bool:
+        return "[test]" in text or "testversand - diese e-mail wurde nicht an den handler gesendet" in text
+
+    @staticmethod
+    def _precheck_non_offer(inbound_email: InboundEmail, text: str) -> dict | None:
+        sender_email = (inbound_email.sender_email or "").strip().lower()
+        mailbox_address = inbound_email.mailbox_address.strip().lower()
+        subject = (inbound_email.subject or "").strip().lower()
+        normalized_text = CampaignContactService._normalize_text_for_matching(text)
+
+        if sender_email and sender_email == mailbox_address:
+            return CampaignContactService._analysis(
+                processing_result="NO_OFFER",
+                message_type="OUTBOUND_COPY",
+                confidence=Decimal("1.00"),
+                reason="Sender and mailbox address are identical.",
+            )
+        if subject.startswith("[test]") or CampaignContactService._is_outbound_copy(normalized_text):
+            return CampaignContactService._analysis(
+                processing_result="NO_OFFER",
+                message_type="OUTBOUND_COPY",
+                confidence=Decimal("1.00"),
+                reason="Detected internal test or outbound copy.",
+            )
+        return None
+
+    @staticmethod
+    def _build_evidence(field: str, excerpt: str, value: Decimal, *, source: str = "email_text") -> list[dict]:
+        cleaned_excerpt = " ".join(excerpt.split())
+        return [{"field": field, "value": value, "source": source, "excerpt": cleaned_excerpt[:200]}]
+
+    @staticmethod
+    def _extract_bmw_cash_offer(text: str, *, extracted_from_attachment: bool) -> dict | None:
+        segment = CampaignContactService._primary_offer_segment(text)
+
+        total_cash_price = CampaignContactService._extract_labeled_line_amount(segment, "Gesamtpreis")
+        if total_cash_price is None:
+            return None
+
+        vehicle_price = CampaignContactService._extract_labeled_line_amount(segment, "Modell")
+        equipment_price = CampaignContactService._extract_labeled_line_amount(segment, "Ausstattung")
+        dealer_services = CampaignContactService._extract_labeled_line_amount(segment, "Händlerleistungen")
+        list_price = CampaignContactService._extract_labeled_amount(
+            segment,
+            r"(?is)Bruttolistenpreis.*?betr(?:ä|ae)?gt\s+(?P<amount>\d{1,3}(?:[.\s]\d{3})*(?:,\d{2}))\s*EUR",
+        )
+        if list_price is None:
+            sum_model_equipment = CampaignContactService._extract_labeled_line_amount(segment, "Summe Modell und Ausstattung")
+            list_price = sum_model_equipment
+
+        discount_amount = CampaignContactService._extract_labeled_line_amount(segment, "Nachlass", absolute=True)
+        discount_percent_match = re.search(
+            r"(?is)Nachlass[^(]*\(([\d,]+)%\)",
+            segment,
+        )
+        discount_percent = (
+            Decimal(discount_percent_match.group(1).replace(",", "."))
+            if discount_percent_match is not None
+            else None
+        )
+        if discount_amount is None and list_price and total_cash_price and list_price > total_cash_price:
+            discount_amount = list_price - total_cash_price
+        if discount_percent is None and list_price and discount_amount:
+            discount_percent = ((discount_amount / list_price) * Decimal("100")).quantize(Decimal("0.0001"))
+
+        evidence = []
+        source = "attachment_text" if extracted_from_attachment else "email_text"
+        evidence.extend(
+            CampaignContactService._build_evidence(
+                "pricing.total_cash_price",
+                CampaignContactService._excerpt_around_keyword(segment, "Gesamtpreis"),
+                total_cash_price,
+                source=source,
+            )
+        )
+        if list_price is not None:
+            evidence.extend(
+                CampaignContactService._build_evidence(
+                    "pricing.list_price",
+                    CampaignContactService._excerpt_around_keyword(segment, "Bruttolistenpreis"),
+                    list_price,
+                    source=source,
+                )
+            )
+        if discount_amount is not None:
+            evidence.extend(
+                CampaignContactService._build_evidence(
+                    "pricing.discount_amount",
+                    CampaignContactService._excerpt_around_keyword(segment, "Nachlass"),
+                    discount_amount,
+                    source=source,
+                )
+            )
+
+        return {
+            "offer_type": "CASH",
+            "pricing": {
+                "currency": "EUR",
+                "list_price": list_price,
+                "discount_amount": discount_amount,
+                "discount_percent": discount_percent,
+                "vehicle_price": vehicle_price or total_cash_price,
+                "transfer_cost": None,
+                "registration_cost": None,
+                "additional_costs": dealer_services,
+                "total_cash_price": total_cash_price,
+                "monthly_rate": None,
+                "down_payment": None,
+                "final_payment": None,
+                "annual_percentage_rate": None,
+                "term_months": None,
+                "annual_mileage_km": None,
+                "total_lease_cost": None,
+                "total_financing_cost": None,
+                "equipment_price": equipment_price,
+            },
+            "source": {
+                "extracted_from_email": not extracted_from_attachment,
+                "extracted_from_attachment": extracted_from_attachment,
+            },
+            "quality": {
+                "confidence": Decimal("0.99"),
+                "missing_fields": [],
+                "warnings": [],
+                "evidence": evidence,
+            },
+        }
+
+    @staticmethod
+    def _primary_offer_segment(text: str) -> str:
+        split_markers = [
+            r"(?i)\bBMW Financial Services\b",
+            r"(?i)\bLeasingbeispiel\b",
+            r"(?i)\bInformation über den Energieverbrauch\b",
+            r"(?i)\bMögliche CO\s*-?Kosten\b",
+        ]
+        split_index = len(text)
+        for pattern in split_markers:
+            match = re.search(pattern, text)
+            if match is not None:
+                split_index = min(split_index, match.start())
+        return text[:split_index]
+
+    @staticmethod
+    def _extract_labeled_amount(text: str, pattern: str, *, absolute: bool = False) -> Decimal | None:
+        match = re.search(pattern, text)
+        if match is None:
+            return None
+        raw = match.group("amount").replace(" ", "").replace(".", "").replace(",", ".")
+        try:
+            value = Decimal(raw)
+        except Exception:
+            return None
+        return abs(value) if absolute else value
+
+    @staticmethod
+    def _extract_labeled_line_amount(text: str, label: str, *, absolute: bool = False) -> Decimal | None:
+        escaped = re.escape(label)
+        for line in text.splitlines():
+            if not re.search(escaped, line, flags=re.IGNORECASE):
+                continue
+            amount = CampaignContactService._extract_last_amount_from_text(line)
+            if amount is not None:
+                return abs(amount) if absolute else amount
+        return None
+
+    @staticmethod
+    def _extract_last_amount_from_text(text: str) -> Decimal | None:
+        matches = re.findall(r"-?\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})", text)
+        if not matches:
+            return None
+        raw = matches[-1].replace(" ", "").replace(".", "").replace(",", ".")
+        try:
+            return Decimal(raw)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _excerpt_around_keyword(text: str, keyword: str, radius: int = 120) -> str:
+        match = re.search(re.escape(keyword), text, flags=re.IGNORECASE)
+        if match is None:
+            return text[:radius]
+        start = max(0, match.start() - radius // 2)
+        end = min(len(text), match.end() + radius // 2)
+        return text[start:end]
+
+    @staticmethod
+    def _extract_lease_offer(text: str) -> dict | None:
+        lowered = text.lower()
+        if not any(keyword in lowered for keyword in ["leasing", "leasingrate", "monat"]):
+            return None
+        monthly_rate_match = re.search(r"(?i)(?:leasingrate|rate)\s+(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})?)\s*(?:€|eur)", text)
+        term_match = re.search(r"(?i)(\d{1,3})\s*monate", text)
+        mileage_match = re.search(r"(?i)(\d{1,3}(?:[.\s]\d{3})*)\s*km", text)
+        if monthly_rate_match is None and term_match is None:
+            return None
+        monthly_rate = (
+            Decimal(monthly_rate_match.group(1).replace(" ", "").replace(".", "").replace(",", "."))
+            if monthly_rate_match is not None
+            else None
+        )
+        term_months = int(term_match.group(1)) if term_match is not None else None
+        annual_mileage = int(mileage_match.group(1).replace(".", "").replace(" ", "")) if mileage_match is not None else None
+        return {
+            "offer_type": "LEASING",
+            "pricing": {
+                "currency": "EUR",
+                "list_price": None,
+                "discount_amount": None,
+                "discount_percent": None,
+                "vehicle_price": None,
+                "transfer_cost": None,
+                "registration_cost": None,
+                "additional_costs": None,
+                "total_cash_price": None,
+                "monthly_rate": monthly_rate,
+                "down_payment": None,
+                "final_payment": None,
+                "annual_percentage_rate": None,
+                "term_months": term_months,
+                "annual_mileage_km": annual_mileage,
+                "total_lease_cost": None,
+                "total_financing_cost": None,
+            },
+            "source": {
+                "extracted_from_email": True,
+                "extracted_from_attachment": False,
+            },
+            "quality": {
+                "confidence": Decimal("0.91"),
+                "missing_fields": [],
+                "warnings": [],
+                "evidence": [],
+            },
+        }
+
+    def _load_existing_extraction_result(self, inbound_email: InboundEmail) -> InboundOfferExtractionResponse | None:
+        metadata = inbound_email.raw_metadata or {}
+        stored = metadata.get("offer_extraction")
+        if not isinstance(stored, dict):
+            return None
+        offer_record = self.offer_repository.get_by_inbound_email(inbound_email.id)
+        analysis = self._deserialize_analysis(stored)
+        return self._build_extraction_response(inbound_email, analysis, offer_record)
+
+    def _apply_extraction_result(self, inbound_email: InboundEmail, analysis: dict) -> None:
+        inbound_email.processing_status = analysis["processing_result"]
+        inbound_email.message_type = analysis["message_type"]
+        inbound_email.extraction_confidence = analysis["confidence"]
+        inbound_email.extraction_reason = analysis["reason"]
+        inbound_email.processed_at = datetime.now(UTC)
+        metadata = dict(inbound_email.raw_metadata or {})
+        metadata["offer_extraction"] = self._serialize_json_value(analysis)
+        inbound_email.raw_metadata = metadata
+        if inbound_email.contact is not None:
+            inbound_email.contact.status = analysis["processing_result"]
+
+    def _upsert_offer_from_analysis(
+        self,
+        inbound_email: InboundEmail,
+        text: str,
+        analysis: dict,
+        existing_offer: DealerOffer | None,
+    ) -> DealerOffer:
+        offer_data = analysis["offer"] or {}
+        pricing = offer_data.get("pricing", {})
+        offer = existing_offer or DealerOffer(
+            campaign_id=inbound_email.campaign_id,
+            dealer_id=inbound_email.dealer_id,
+            inbound_email_id=inbound_email.id,
+            dealer_name=inbound_email.contact.dealer.name if inbound_email.contact and inbound_email.contact.dealer else (inbound_email.sender_name or inbound_email.sender_email or "Unknown Dealer"),
+            source_type="email",
+            raw_response=text.strip() or "(empty email)",
+        )
+        offer.campaign_id = inbound_email.campaign_id
+        offer.dealer_id = inbound_email.dealer_id
+        offer.dealer_name = (
+            inbound_email.contact.dealer.name
+            if inbound_email.contact and inbound_email.contact.dealer
+            else (inbound_email.sender_name or inbound_email.sender_email or "Unknown Dealer")
+        )
+        offer.source_type = "email"
+        offer.currency = pricing.get("currency") or "EUR"
+        offer.raw_response = text.strip() or "(empty email)"
+        offer.vehicle_price = pricing.get("vehicle_price")
+        offer.transfer_cost = pricing.get("transfer_cost")
+        offer.registration_cost = pricing.get("registration_cost")
+        offer.total_price = pricing.get("total_cash_price") or pricing.get("vehicle_price") or pricing.get("monthly_rate")
+        offer.cash_price = pricing.get("total_cash_price")
+        offer.financing_total_cost = pricing.get("total_financing_cost")
+        offer.offer_valid_until = None
+        offer.gross_final_price = pricing.get("total_cash_price") or pricing.get("vehicle_price")
+        offer.list_price = pricing.get("list_price")
+        offer.discount_amount = pricing.get("discount_amount")
+        offer.discount_percent = pricing.get("discount_percent")
+        offer.delivery_cost = pricing.get("transfer_cost")
+        offer.other_costs = pricing.get("additional_costs")
+        offer.valid_until = None
+        offer.price_confidence = analysis["confidence"]
+        offer.extraction_status = analysis["processing_result"]
+        offer.missing_fields = analysis["missing_fields"]
+        offer.extraction_notes = analysis["reason"]
+        offer.raw_extraction = self._serialize_json_value(analysis)
+        offer.extracted_at = datetime.now(UTC)
+        if existing_offer is None:
+            self.offer_repository.add(offer)
+        return offer
+
+    def _build_extraction_response(
+        self,
+        inbound_email: InboundEmail,
+        analysis: dict,
+        offer_record: DealerOffer | None,
+    ) -> InboundOfferExtractionResponse:
+        return InboundOfferExtractionResponse(
+            inbound_email_id=inbound_email.id,
+            processing_result=analysis["processing_result"],
+            message_type=analysis["message_type"],
+            confidence=analysis["confidence"],
+            offer=self._serialize_json_value(analysis["offer"]),
+            reason=analysis["reason"],
+            status=analysis["processing_result"],
+            gross_final_price=analysis["gross_final_price"],
+            currency=analysis["currency"],
+            price_confidence=analysis["price_confidence"],
+            needs_review=analysis["needs_review"],
+            review_reason=analysis["review_reason"],
+            dealer_offer_id=offer_record.id if offer_record is not None else None,
+        )
+
+    def _deserialize_analysis(self, value: dict) -> dict:
+        return {
+            "processing_result": value["processing_result"],
+            "message_type": value["message_type"],
+            "status": value["status"],
+            "currency": value.get("currency"),
+            "gross_final_price": self._deserialize_decimal(value.get("gross_final_price")),
+            "list_price": self._deserialize_decimal(value.get("list_price")),
+            "discount_amount": self._deserialize_decimal(value.get("discount_amount")),
+            "discount_percent": self._deserialize_decimal(value.get("discount_percent")),
+            "delivery_cost": self._deserialize_decimal(value.get("delivery_cost")),
+            "registration_cost": self._deserialize_decimal(value.get("registration_cost")),
+            "other_costs": self._deserialize_decimal(value.get("other_costs")),
+            "delivery_time_text": value.get("delivery_time_text"),
+            "valid_until": value.get("valid_until"),
+            "price_confidence": self._deserialize_decimal(value.get("price_confidence")),
+            "confidence": self._deserialize_decimal(value.get("confidence")) or Decimal("0"),
+            "offer": self._deserialize_nested_decimals(value.get("offer")),
+            "missing_fields": value.get("missing_fields", []),
+            "needs_review": value.get("needs_review", False),
+            "review_reason": value.get("review_reason"),
+            "reason": value.get("reason"),
+            "raw": self._deserialize_nested_decimals(value.get("raw", {})),
+        }
+
+    @staticmethod
+    def _deserialize_nested_decimals(value):
+        if isinstance(value, str):
+            try:
+                return Decimal(value)
+            except Exception:
+                return value
+        if isinstance(value, dict):
+            return {key: CampaignContactService._deserialize_nested_decimals(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [CampaignContactService._deserialize_nested_decimals(item) for item in value]
+        return value
+
+    @staticmethod
+    def _deserialize_decimal(value) -> Decimal | None:
+        if value is None:
+            return None
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
 
     @staticmethod
     def _serialize_json_value(value):
@@ -1446,6 +1943,8 @@ class CampaignContactService:
                 value = Decimal(raw_amount)
             except Exception:
                 continue
+            excerpt_start = max(0, match.start() - 80)
+            excerpt_end = min(len(text), match.end() + 80)
             prefix_window = text[max(0, match.start() - 40) : match.start()].lower()
             suffix_window = text[match.end() : min(len(text), match.end() + 20)].lower()
             context_window = f"{prefix_window} {suffix_window}"
@@ -1456,6 +1955,7 @@ class CampaignContactService:
                     "value": value,
                     "label": normalized_label,
                     "context": context,
+                    "excerpt": text[excerpt_start:excerpt_end],
                 }
             )
         results.sort(key=lambda item: (item["context"] == "lease", item["label"] != "final", item["value"]))

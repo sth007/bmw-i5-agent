@@ -57,6 +57,14 @@ class CampaignFromConfigRequest(BaseModel):
     customer: CampaignCustomerInput
 
 
+class CampaignCreateAndStartRequest(BaseModel):
+    campaign_name: str = Field(min_length=1, max_length=200)
+    dealer_limit: int = Field(default=3, ge=1, le=100)
+    customer: CampaignCustomerInput
+    notes: str | None = None
+    configuration: CampaignConfigurationCreate
+
+
 class CampaignStatusPatch(BaseModel):
     status: Literal["draft", "active", "paused", "completed", "cancelled"]
 
@@ -355,6 +363,10 @@ class InboundEmailResponse(BaseModel):
     received_at: datetime
     processing_status: str
     matching_status: str
+    message_type: str | None = None
+    extraction_confidence: Decimal | None = None
+    extraction_reason: str | None = None
+    processed_at: datetime | None = None
     can_extract: bool = False
     created_at: datetime
     updated_at: datetime
@@ -362,10 +374,16 @@ class InboundEmailResponse(BaseModel):
 
 class InboundOfferExtractionRequest(BaseModel):
     attachment_text: list[str] = Field(default_factory=list)
+    force_reextract: bool = False
 
 
 class InboundOfferExtractionResponse(BaseModel):
     inbound_email_id: UUID
+    processing_result: str
+    message_type: str
+    confidence: Decimal
+    offer: dict | None
+    reason: str | None
     status: str
     gross_final_price: Decimal | None
     currency: str | None

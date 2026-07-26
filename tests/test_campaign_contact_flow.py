@@ -207,7 +207,8 @@ def test_register_inbound_email_matches_by_thread_and_extracts_price(client) -> 
     )
     assert extraction.status_code == 200
     body = extraction.json()
-    assert body["status"] == "PRICE_EXTRACTED"
+    assert body["processing_result"] == "OFFER_EXTRACTED"
+    assert body["message_type"] == "OFFER"
     assert body["gross_final_price"] == "74990.00"
     assert body["needs_review"] is False
 
@@ -1057,8 +1058,9 @@ def test_extract_offer_marks_question_and_acknowledgement_for_review(client) -> 
         json={"attachment_text": []},
     )
     assert question_extract.status_code == 200
-    assert question_extract.json()["status"] == "QUESTION_FROM_DEALER"
-    assert question_extract.json()["needs_review"] is True
+    assert question_extract.json()["processing_result"] == "NO_OFFER"
+    assert question_extract.json()["message_type"] == "QUESTION_FROM_DEALER"
+    assert question_extract.json()["needs_review"] is False
 
     ack = client.post(
         "/api/inbound-emails",
@@ -1079,11 +1081,141 @@ def test_extract_offer_marks_question_and_acknowledgement_for_review(client) -> 
         json={"attachment_text": []},
     )
     assert ack_extract.status_code == 200
-    assert ack_extract.json()["status"] == "ACKNOWLEDGEMENT_ONLY"
-    assert ack_extract.json()["needs_review"] is True
+    assert ack_extract.json()["processing_result"] == "NO_OFFER"
+    assert ack_extract.json()["message_type"] == "AUTO_REPLY"
+    assert ack_extract.json()["needs_review"] is False
 
 
-def test_extract_offer_does_not_treat_leasing_rate_as_purchase_price(client) -> None:
+def test_extract_offer_prefers_offer_when_pdf_contains_prices_and_marketing_questions(client) -> None:
+    _import_dealers(client)
+    campaign_id = _create_campaign(client)
+    claim = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    client.post(
+        f"/api/campaign-contacts/{claim['contact_id']}/sent",
+        json={
+            "provider": "gmail",
+            "provider_message_id": "gmail-message-pdf-offer",
+            "provider_thread_id": "gmail-thread-pdf-offer",
+            "internet_message_id": "<message-pdf-offer@example.test>",
+            "sent_to": claim["effective_to"],
+            "test_mode": False,
+        },
+    )
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-pdf-offer",
+            "provider_thread_id": "gmail-thread-pdf-offer",
+            "sender_email": "stuttgart@bmw.de",
+            "subject": claim["subject"],
+            "text_body": "Im Anhang finden Sie unser Angebot.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    ).json()
+
+    extraction = client.post(
+        f"/api/inbound-emails/{inbound['id']}/extract-offer",
+        json={
+            "attachment_text": [
+                (
+                    "Sie koennen es kaum erwarten, Ihr Fahrzeug bereits vorab virtuell zu erleben?\n"
+                    "Gerne beraten wir Sie weiter zu weiteren Angeboten.\n"
+                    "Angebot Nr. 20216449 vom 13.07.2026\n"
+                    "Gesamtpreis 56.881,26\n"
+                    "Der Bruttolistenpreis betraegt 74.820,00 EUR.\n"
+                    "36 monatliche Leasingraten a 647,70 EUR\n"
+                    "Laufzeit 36 Monate\n"
+                )
+            ],
+            "force_reextract": True,
+        },
+    )
+    assert extraction.status_code == 200
+    body = extraction.json()
+    assert body["processing_result"] == "OFFER_EXTRACTED"
+    assert body["message_type"] == "OFFER"
+    assert body["dealer_offer_id"] is not None
+    assert body["gross_final_price"] == "56881.26"
+    assert body["offer"]["pricing"]["total_cash_price"] == "56881.26"
+    assert body["offer"]["pricing"]["list_price"] == "74820.00"
+    assert body["offer"]["pricing"]["discount_amount"] == "17938.74"
+    assert body["offer"]["pricing"]["vehicle_price"] == "56881.26"
+    assert body["offer"]["source"]["extracted_from_attachment"] is True
+    assert body["offer"]["source"]["extracted_from_email"] is False
+
+
+def test_extract_offer_from_full_bmw_pdf_ignores_co2_and_leasing_examples(client) -> None:
+    _import_dealers(client)
+    campaign_id = _create_campaign(client)
+    claim = client.post(
+        f"/api/campaigns/{campaign_id}/contacts/claim",
+        json={"limit": 1, "reservation_owner": "n8n-1", "test_mode": False},
+    ).json()["contacts"][0]
+    client.post(
+        f"/api/campaign-contacts/{claim['contact_id']}/sent",
+        json={
+            "provider": "gmail",
+            "provider_message_id": "gmail-message-full-pdf",
+            "provider_thread_id": "gmail-thread-full-pdf",
+            "internet_message_id": "<message-full-pdf@example.test>",
+            "sent_to": claim["effective_to"],
+            "test_mode": False,
+        },
+    )
+
+    with open("tests/data/bmw_offer_20216449.txt", encoding="utf-8") as handle:
+        raw = handle.read()
+
+    import json
+
+    attachment_payload = json.loads(raw)[0]["text"]
+
+    inbound = client.post(
+        "/api/inbound-emails",
+        json={
+            "mailbox_address": "zaour.ludwigsburger@gmail.com",
+            "provider": "gmail",
+            "provider_message_id": "inbound-full-pdf-offer",
+            "provider_thread_id": "gmail-thread-full-pdf",
+            "sender_email": "stuttgart@bmw.de",
+            "subject": claim["subject"],
+            "text_body": "Im Anhang finden Sie unser Angebot inklusive Finanzdienstleistungsbeispiel.",
+            "received_at": datetime.now(UTC).isoformat(),
+            "raw_metadata": {},
+        },
+    ).json()
+
+    extraction = client.post(
+        f"/api/inbound-emails/{inbound['id']}/extract-offer",
+        json={
+            "attachment_text": [attachment_payload],
+            "force_reextract": True,
+        },
+    )
+    assert extraction.status_code == 200
+    body = extraction.json()
+    assert body["processing_result"] == "OFFER_EXTRACTED"
+    assert body["message_type"] == "OFFER"
+    assert body["gross_final_price"] == "56881.26"
+    assert body["offer"]["pricing"]["total_cash_price"] == "56881.26"
+    assert body["offer"]["pricing"]["list_price"] == "74820.00"
+    assert body["offer"]["pricing"]["discount_amount"] == "19228.74"
+    assert body["offer"]["pricing"]["discount_percent"] == "25.7"
+    assert body["offer"]["pricing"]["vehicle_price"] == "72900.00"
+    assert body["offer"]["pricing"]["additional_costs"] == "1290.00"
+    assert body["offer"]["source"]["extracted_from_attachment"] is True
+    assert body["offer"]["source"]["extracted_from_email"] is False
+    assert body["offer"]["quality"]["evidence"][0]["source"] == "attachment_text"
+
+
+def test_extract_offer_treats_leasing_example_as_irrelevant(client) -> None:
     _import_dealers(client)
     campaign_id = _create_campaign(client)
     claim = client.post(
@@ -1122,9 +1254,10 @@ def test_extract_offer_does_not_treat_leasing_rate_as_purchase_price(client) -> 
         json={"attachment_text": []},
     )
     assert extraction.status_code == 200
-    assert extraction.json()["status"] == "NO_PRICE"
+    assert extraction.json()["processing_result"] == "NO_OFFER"
+    assert extraction.json()["message_type"] == "LEASING_OR_FINANCING_IRRELEVANT"
     assert extraction.json()["gross_final_price"] is None
-    assert extraction.json()["needs_review"] is True
+    assert extraction.json()["needs_review"] is False
 
 
 def test_review_queue_returns_needs_review_items_on_both_routes(client) -> None:
