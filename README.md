@@ -16,6 +16,7 @@ Der aktuelle Schwerpunkt liegt auf einem robusten operativen Flow:
 - [Fachlicher Ablauf](#fachlicher-ablauf)
 - [Systemarchitektur](#systemarchitektur)
 - [Projektstruktur](#projektstruktur)
+- [Screenshots](#screenshots)
 - [Lokale Inbetriebnahme](#lokale-inbetriebnahme)
 - [Konfiguration](#konfiguration)
 - [API-Uebersicht](#api-uebersicht)
@@ -126,6 +127,32 @@ n8n/             Exportierte Workflows
 docs/            Architektur-, Workflow- und Debug-Dokumentation
 data/            lokale Daten fuer n8n und optionale Runtime-Daten
 ```
+
+## Screenshots
+
+Die README erwartet drei Workflow-Screenshots unter `docs/images/`:
+
+- `docs/images/workflow-campaign-dispatch.png`
+- `docs/images/workflow-test-reset-and-validation.png`
+- `docs/images/workflow-inbound-offer-processing.png`
+
+### Kampagnenversand und Batch-Steuerung
+
+Dieser Workflow zeigt den outbound-orientierten Kampagnenablauf mit Claiming, Versand, Versandbestaetigung, Dispatch-Status und Abschlussentscheidung.
+
+![Kampagnenversand und Batch-Steuerung](docs/images/workflow-campaign-dispatch.png)
+
+### Test-Reset und Validierung
+
+Dieser Workflow deckt Testumgebungs-Reset, Validierung und den technischen Vorlauf fuer reproduzierbare Testlaeufe ab.
+
+![Test-Reset und Validierung](docs/images/workflow-test-reset-and-validation.png)
+
+### Inbound-Mail-Verarbeitung und Offer Extraction
+
+Dieser Workflow zeigt die Verarbeitung eingehender E-Mails vom IMAP-Trigger ueber Registrierung und PDF-Extraktion bis zur Lowest-Offer-Entscheidung und Benachrichtigung.
+
+![Inbound-Mail-Verarbeitung und Offer Extraction](docs/images/workflow-inbound-offer-processing.png)
 
 ## Lokale Inbetriebnahme
 
