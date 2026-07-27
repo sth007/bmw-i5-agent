@@ -254,7 +254,7 @@ def test_campaign_from_public_config_creates_campaign_and_previews(client) -> No
     assert payload["status"] == "DRAFT"
     assert len(payload["dealers"]) == 2
     assert len(payload["email_previews"]) == 2
-    assert "BMW i5 eDrive40 Touring" in payload["email_previews"][0]["body"]
+    assert "BMW i5 xDrive40 Touring" in payload["email_previews"][0]["body"]
     assert "Sophistograu Brillanteffekt metallic" in payload["email_previews"][0]["body"]
 
 

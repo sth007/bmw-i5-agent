@@ -2,6 +2,11 @@ from __future__ import annotations
 
 BMW_MODEL_MAP: dict[str, dict[str, str]] = {
     "51HH": {
+        "model_name": "BMW i5 xDrive40 Touring",
+        "variant": "xDrive40",
+        "body": "Touring",
+    },
+    "71HH": {
         "model_name": "BMW i5 eDrive40 Touring",
         "variant": "eDrive40",
         "body": "Touring",

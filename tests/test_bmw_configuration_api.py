@@ -22,7 +22,7 @@ def test_parse_bmw_configuration_endpoint_returns_normalized_payload(client) -> 
     assert payload["configuration"]["upholstery"]["code"] == "FKSFU"
     assert payload["configuration"]["options"][0]["code"] == "S0337"
     assert payload["parser"]["status"] == "PARTIALLY_PARSED"
-    assert payload["dealer_request"]["subject"] == "Anfrage Barkauf – BMW i5 eDrive40 Touring"
+    assert payload["dealer_request"]["subject"] == "Anfrage Barkauf – BMW i5 xDrive40 Touring"
 
 
 def test_parse_bmw_configuration_endpoint_rejects_invalid_host(client) -> None:

@@ -55,7 +55,7 @@ def test_email_template_service_renders_subject_and_body() -> None:
         customer_email="max.mustermann@example.de",
         customer_phone=None,
         configuration_items=[
-            "Variante: BMW i5 eDrive40 Touring",
+            "Variante: BMW i5 xDrive40 Touring",
             "Außenfarbe: Sophistograu Brillanteffekt metallic",
         ],
     )
@@ -65,7 +65,7 @@ def test_email_template_service_renders_subject_and_body() -> None:
     assert preview.to == "bmw-stuttgart@bmw.de"
     assert preview.subject == "Anfrage zu meiner BMW Wunschkonfiguration"
     assert "https://configure.bmw.de/de_DE/configid/chtwyiio" in preview.body
-    assert "Variante: BMW i5 eDrive40 Touring" in preview.body
+    assert "Variante: BMW i5 xDrive40 Touring" in preview.body
     assert "Außenfarbe: Sophistograu Brillanteffekt metallic" in preview.body
     assert "Max Mustermann" in preview.body
     assert "BMW AG Niederlassung Stuttgart" in preview.body
@@ -231,8 +231,8 @@ def test_create_from_public_config_builds_configuration_from_codes(db_session) -
     assert response.config_id == "chtwyiio"
     assert campaign is not None
     assert campaign.configuration is not None
-    assert campaign.configuration.model == "BMW i5 eDrive40 Touring"
-    assert campaign.configuration.variant == "eDrive40"
+    assert campaign.configuration.model == "BMW i5 xDrive40 Touring"
+    assert campaign.configuration.variant == "xDrive40"
     assert [item.feature_key for item in campaign.configuration.requirements] == [
         "vehicle.model_name",
         "configuration.paint",
