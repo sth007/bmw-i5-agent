@@ -135,6 +135,7 @@ Die README erwartet drei Workflow-Screenshots unter `docs/images/`:
 - `docs/images/workflow-campaign-dispatch.png`
 - `docs/images/workflow-test-reset-and-validation.png`
 - `docs/images/workflow-inbound-offer-processing.png`
+- `docs/images/api-docs-swagger.png`
 
 ### Kampagnenversand und Batch-Steuerung
 
@@ -153,6 +154,12 @@ Dieser Workflow deckt Testumgebungs-Reset, Validierung und den technischen Vorla
 Dieser Workflow zeigt die Verarbeitung eingehender E-Mails vom IMAP-Trigger ueber Registrierung und PDF-Extraktion bis zur Lowest-Offer-Entscheidung und Benachrichtigung.
 
 ![Inbound-Mail-Verarbeitung und Offer Extraction](docs/images/workflow-inbound-offer-processing.png)
+
+### API-Dokumentation in Swagger UI
+
+Die FastAPI-Anwendung stellt unter `http://localhost:8000/docs` eine interaktive Swagger-Oberflaeche bereit. Darin lassen sich alle relevanten Endpunkte, Schemas und Request-/Response-Modelle direkt pruefen.
+
+![API-Dokumentation in Swagger UI](docs/images/api-docs-swagger.png)
 
 ## Lokale Inbetriebnahme
 
