@@ -488,10 +488,21 @@ Die Test-Suite deckt unter anderem ab:
 
 n8n ist die Orchestrierungs- und Debugging-Schicht des Projekts.
 
-Vorhandene Workflow-Dateien:
+Beispiel-Workflows im Repository:
 
 - `n8n/BMW – Incoming Dealer Offers.json`
 - `n8n/BMW – Dealer Database Debug.json`
+
+Importierbare Workflow-Beispiele fuer die lokale n8n-Instanz liegen zusaetzlich unter:
+
+- `data/n8n/workflows`
+
+Gedachte Aufteilung:
+
+- `n8n/`: versionierte Exportdateien und Referenz-Workflows im Repository
+- `data/n8n/workflows`: lokale Workflow-Beispiele oder Import-Artefakte fuer n8n
+
+Wenn du in n8n neue oder angepasste Flows testen willst, ist `data/n8n/workflows` der vorgesehene Ablageort fuer importierbare Beispiele.
 
 Typische Aufgaben in n8n:
 
