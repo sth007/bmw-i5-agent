@@ -73,6 +73,30 @@ class CampaignFromConfigRequest(BaseModel):
         return ((self.configuration_url or "").strip() or (self.config_url or "").strip())
 
 
+class PublicConfigurationAccessoryInput(BaseModel):
+    accessoryId: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(default=1, ge=1, le=100)
+
+
+class PublicConfigurationInput(BaseModel):
+    config_id: str = Field(min_length=1, max_length=64)
+    effect_date: date | None = None
+    model_code: str = Field(min_length=1, max_length=16)
+    option_codes: list[str] = Field(default_factory=list)
+    accessories: dict[str, PublicConfigurationAccessoryInput] = Field(default_factory=dict)
+    original_configuration_url: str | None = Field(default=None, min_length=1)
+
+
+class CampaignFromPublicConfigRequest(BaseModel):
+    campaign_name: str = Field(min_length=1, max_length=200)
+    customer: CampaignCustomerInput
+    dealer_limit: int = Field(default=3, ge=1, le=100)
+    notes: str | None = None
+    maximum_target_price: Decimal = Field(default=Decimal("0"), ge=0)
+    payment_preference: Literal["cash", "financing", "either"] = "cash"
+    public_configuration: PublicConfigurationInput
+
+
 class CampaignCreateAndStartRequest(BaseModel):
     campaign_name: str = Field(min_length=1, max_length=200)
     dealer_limit: int = Field(default=3, ge=1, le=100)

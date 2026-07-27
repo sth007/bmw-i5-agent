@@ -2,7 +2,7 @@ from app.entities.dealer import Dealer
 from app.services.campaign_service import CampaignService
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
-from app.schemas.campaign import CampaignCustomerInput
+from app.schemas.campaign import CampaignCustomerInput, CampaignFromPublicConfigRequest
 
 
 def test_extract_config_id_from_bmw_config_url(db_session) -> None:
@@ -191,3 +191,52 @@ def test_campaign_service_uses_exact_repository_selection(db_session) -> None:
     )
 
     assert [dealer.dealer_id for dealer in response.dealers] == [dealer.id for dealer in selected]
+
+
+def test_create_from_public_config_builds_configuration_from_codes(db_session) -> None:
+    dealers = [
+        Dealer(bmw_dealer_id="dealer-001", name="A", email="a@example.com", is_published=True),
+        Dealer(bmw_dealer_id="dealer-002", name="B", email="b@example.com", is_published=True),
+    ]
+    db_session.add_all(dealers)
+    db_session.commit()
+
+    response = CampaignService(db_session).create_from_public_config(
+        CampaignFromPublicConfigRequest.model_validate(
+            {
+                "campaign_name": "BMW i5 Zaour",
+                "dealer_limit": 2,
+                "customer": {
+                    "name": "Zaour Assadov",
+                    "email": "bmw.agent@assadov.de",
+                    "phone": "+49 176 99791071",
+                },
+                "notes": "Nur Barkauf-Angebote relevant.",
+                "maximum_target_price": 57000,
+                "payment_preference": "cash",
+                "public_configuration": {
+                    "config_id": "chtwyiio",
+                    "effect_date": "2026-09-08",
+                    "model_code": "51HH",
+                    "option_codes": ["FKSFU", "P0A90", "S0337"],
+                    "accessories": {"SE000001": {"accessoryId": "SE000001", "quantity": 1}},
+                    "original_configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                },
+            }
+        )
+    )
+
+    campaign = CampaignService(db_session).get_campaign(response.campaign_id)
+
+    assert response.config_id == "chtwyiio"
+    assert campaign is not None
+    assert campaign.configuration is not None
+    assert campaign.configuration.model == "BMW i5 eDrive40 Touring"
+    assert campaign.configuration.variant == "eDrive40"
+    assert [item.feature_key for item in campaign.configuration.requirements] == [
+        "vehicle.model_name",
+        "configuration.paint",
+        "configuration.upholstery",
+        "configuration.option.s0337",
+        "configuration.accessory.se000001",
+    ]

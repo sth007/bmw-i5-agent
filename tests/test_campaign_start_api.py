@@ -196,6 +196,68 @@ def test_campaign_from_config_returns_warning_when_no_eligible_dealers_exist(cli
     assert payload["warnings"] == ["No eligible dealers with a valid email address were found."]
 
 
+def test_campaign_from_public_config_creates_campaign_and_previews(client) -> None:
+    dealer_import_response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-public-config-001",
+                "name": "Dealer 1",
+                "city": "Stuttgart",
+                "email": "dealer1@example.com",
+                "is_published": True,
+            },
+            {
+                "bmw_dealer_id": "bmw-public-config-002",
+                "name": "Dealer 2",
+                "city": "Muenchen",
+                "email": "dealer2@example.com",
+                "is_published": True,
+            },
+        ],
+    )
+    assert dealer_import_response.status_code == 200
+
+    response = client.post(
+        "/api/campaigns/from-public-config",
+        json={
+            "campaign_name": "BMW i5 Zaour",
+            "dealer_limit": 2,
+            "customer": {
+                "name": "Zaour Assadov",
+                "email": "bmw.agent@assadov.de",
+                "phone": "+49 176 99791071",
+            },
+            "notes": "Nur Barkauf-Angebote relevant.",
+            "maximum_target_price": 57000,
+            "payment_preference": "cash",
+            "public_configuration": {
+                "config_id": "chtwyiio",
+                "effect_date": "2026-09-08",
+                "model_code": "51HH",
+                "option_codes": ["FKSFU", "P0A90", "S0337", "S03G9", "S05AS"],
+                "accessories": {
+                    "SE000001": {
+                        "accessoryId": "SE000001",
+                        "quantity": 1,
+                    }
+                },
+                "original_configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["campaign_name"] == "BMW i5 Zaour"
+    assert payload["config_id"] == "chtwyiio"
+    assert payload["status"] == "DRAFT"
+    assert len(payload["dealers"]) == 2
+    assert len(payload["email_previews"]) == 2
+    assert "BMW i5 eDrive40 Touring" in payload["email_previews"][0]["body"]
+    assert "Sophistograu Brillanteffekt metallic" in payload["email_previews"][0]["body"]
+
+
 def test_create_and_start_campaign_persists_configuration_and_returns_previews(client) -> None:
     dealer_import_response = client.post(
         "/dealers/import",

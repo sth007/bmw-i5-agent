@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from uuid import UUID
@@ -15,9 +16,11 @@ from app.schemas.campaign import (
     CampaignCreate,
     CampaignCreateAndStartRequest,
     CampaignCustomerInput,
+    CampaignFromPublicConfigRequest,
     CampaignStartResponse,
     CampaignStatusPatch,
 )
+from app.services.bmw_option_catalog import BMW_MODEL_MAP, BMW_OPTION_MAP, BMW_PAINT_MAP, BMW_UPHOLSTERY_MAP
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.bmw_configuration_parser import BMWConfigurationParserError, BMWConfigurationParserService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
@@ -148,6 +151,116 @@ class CampaignService:
             config_url=config_url,
             dealer_limit=dealer_limit,
             customer=None,
+        )
+
+    def create_from_public_config(
+        self,
+        payload: CampaignFromPublicConfigRequest,
+    ) -> CampaignStartResponse:
+        cleaned_name = payload.campaign_name.strip()
+        if not cleaned_name:
+            raise ValueError("campaign_name must not be blank")
+
+        public_config = payload.public_configuration
+        original_url = (public_config.original_configuration_url or "").strip() or (
+            f"https://configure.bmw.de/de_DE/configid/{public_config.config_id.strip()}"
+        )
+        config_id = public_config.config_id.strip()
+        if not config_id:
+            raise ValueError("public_configuration.config_id must not be blank")
+
+        option_codes = self._deduplicate_codes(public_config.option_codes)
+        model_code = public_config.model_code.strip().upper()
+        model_info = BMW_MODEL_MAP.get(model_code, {})
+
+        campaign_configuration = CampaignConfiguration(
+            configuration_url=original_url,
+            model=(model_info.get("model_name") or model_code).strip(),
+            variant=(model_info.get("variant") or model_code).strip(),
+            package=None,
+            list_price=None,
+            maximum_target_price=payload.maximum_target_price,
+            payment_preference=payload.payment_preference,
+        )
+        campaign_configuration.requirements = self._build_requirements_from_public_config(
+            model_code=model_code,
+            option_codes=option_codes,
+            accessories=public_config.accessories,
+        )
+
+        self.single_campaign_service.delete_all_campaigns_except(None)
+        campaign = Campaign(
+            name=cleaned_name,
+            config_url=original_url,
+            config_id=config_id,
+            status="DRAFT",
+            notes=payload.notes.strip() if payload.notes else None,
+        )
+        campaign.configuration = campaign_configuration
+
+        try:
+            self.repository.add(campaign)
+            self.repository.commit()
+        except Exception:
+            self.repository.rollback()
+            raise
+
+        dealers = DealerSelectionService(self.repository.db).select_for_campaign(payload.dealer_limit)
+
+        customer_name = payload.customer.name.strip()
+        customer_email = str(payload.customer.email) if payload.customer.email else None
+        customer_phone = payload.customer.phone.strip() if payload.customer.phone else None
+        campaign.customer_name = customer_name
+        campaign.customer_email = customer_email
+        campaign.customer_phone = customer_phone
+        self.repository.commit()
+
+        email_template_service = EmailTemplateService()
+        email_previews = [
+            email_template_service.render_campaign_request(
+                dealer_id=dealer.id,
+                campaign_name=campaign.name,
+                config_url=original_url,
+                dealer_name=dealer.name,
+                dealer_email=dealer.email or "",
+                customer_name=customer_name,
+                customer_email=customer_email,
+                customer_phone=customer_phone,
+                configuration_items=self._format_configuration_items(campaign.configuration),
+            )
+            for dealer in dealers
+            if dealer.email and dealer.email.strip()
+        ]
+        warnings: list[str] = []
+        if not dealers:
+            warnings.append("No eligible dealers with a valid email address were found.")
+
+        return CampaignStartResponse(
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            config_url=original_url,
+            config_id=config_id,
+            status=campaign.status,
+            dealers=[
+                {
+                    "dealer_id": dealer.id,
+                    "name": dealer.name,
+                    "city": dealer.city,
+                    "email": dealer.email or "",
+                }
+                for dealer in dealers
+            ],
+            email_previews=[
+                {
+                    "dealer_id": preview.dealer_id,
+                    "dealer_name": preview.dealer_name,
+                    "to": preview.to,
+                    "subject": preview.subject,
+                    "body": preview.body,
+                }
+                for preview in email_previews
+            ],
+            warnings=warnings,
         )
 
     def create_from_config(
@@ -372,3 +485,97 @@ class CampaignService:
             display_label=feature.display_label,
             is_mandatory=feature.is_mandatory,
         )
+
+    def _build_requirements_from_public_config(
+        self,
+        *,
+        model_code: str,
+        option_codes: list[str],
+        accessories: dict[str, object],
+    ) -> list[ConfigurationRequirement]:
+        requirements: list[ConfigurationRequirement] = []
+        model_info = BMW_MODEL_MAP.get(model_code, {})
+        requirements.append(
+            self._build_requirement(
+                SimpleNamespace(
+                    feature_key="vehicle.model_name",
+                    feature_value=model_info.get("model_name") or model_code,
+                    display_label="Variante",
+                    is_mandatory=True,
+                )
+            )
+        )
+
+        paint_code = next((code for code in option_codes if code.startswith("P")), None)
+        upholstery_code = next((code for code in option_codes if code.startswith("F")), None)
+
+        if paint_code:
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key="configuration.paint",
+                        feature_value=BMW_PAINT_MAP.get(paint_code, paint_code),
+                        display_label="Außenfarbe",
+                        is_mandatory=False,
+                    )
+                )
+            )
+        if upholstery_code:
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key="configuration.upholstery",
+                        feature_value=BMW_UPHOLSTERY_MAP.get(upholstery_code, upholstery_code),
+                        display_label="Innenausstattung",
+                        is_mandatory=False,
+                    )
+                )
+            )
+
+        for option_code in option_codes:
+            if option_code in {paint_code, upholstery_code}:
+                continue
+            option_info = BMW_OPTION_MAP.get(option_code)
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key=f"configuration.option.{option_code.lower()}",
+                        feature_value=(option_info or {}).get("name", option_code),
+                        display_label=self._display_label_for_category((option_info or {}).get("category")),
+                        is_mandatory=False,
+                    )
+                )
+            )
+
+        for accessory_key, accessory in accessories.items():
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key=f"configuration.accessory.{str(accessory_key).lower()}",
+                        feature_value=f"{getattr(accessory, 'accessoryId', accessory_key)} x{getattr(accessory, 'quantity', 1)}",
+                        display_label="Zubehoer",
+                        is_mandatory=False,
+                    )
+                )
+            )
+        return requirements
+
+    @staticmethod
+    def _deduplicate_codes(codes: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for code in codes:
+            normalized = code.strip().upper()
+            if normalized and normalized not in seen:
+                result.append(normalized)
+                seen.add(normalized)
+        return result
+
+    @staticmethod
+    def _display_label_for_category(category: str | None) -> str:
+        mapping = {
+            "package": "Paket",
+            "wheels": "Räder",
+            "driver_assistance": "Fahrerassistenz",
+        }
+        return mapping.get(category or "", "Sonderausstattung")
