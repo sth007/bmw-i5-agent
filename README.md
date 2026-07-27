@@ -219,11 +219,11 @@ Die wichtigste Runtime-Konfiguration kommt aus Umgebungsvariablen.
 ### Beispiel fuer lokale Entwicklung
 
 ```env
-POSTGRES_DB=bmw_agent_app
+POSTGRES_DB=bmw_agent
 POSTGRES_USER=bmw_agent
 POSTGRES_PASSWORD=change-me
 
-DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent_app
+DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent
 TEST_DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent_test
 
 APP_ENV=development
@@ -464,7 +464,7 @@ Integrationstests duerfen nur gegen `TEST_DATABASE_URL` laufen. Ein Fallback auf
 Beispiel:
 
 ```env
-DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent_app
+DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent
 TEST_DATABASE_URL=postgresql+psycopg://bmw_agent:change-me@postgres:5432/bmw_agent_test
 ```
 
