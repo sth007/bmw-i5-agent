@@ -159,9 +159,12 @@ def create_campaign_from_config(
     try:
         return service.create_from_config(
             campaign_name=payload.campaign_name,
-            config_url=payload.config_url,
+            config_url=payload.effective_configuration_url,
             dealer_limit=payload.dealer_limit,
             customer=payload.customer,
+            maximum_target_price=payload.maximum_target_price,
+            payment_preference=payload.payment_preference,
+            notes=payload.notes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.schemas.vehicle_configuration import VehicleConfigurationResponse
+
 
 class ConfigurationRequirementCreate(BaseModel):
     feature_key: str = Field(min_length=1, max_length=120)
@@ -52,9 +54,23 @@ class CampaignCustomerInput(BaseModel):
 
 class CampaignFromConfigRequest(BaseModel):
     campaign_name: str = Field(min_length=1, max_length=200)
-    config_url: str = Field(min_length=1)
-    dealer_limit: int = Field(default=3, ge=1, le=100)
     customer: CampaignCustomerInput
+    dealer_limit: int = Field(default=3, ge=1, le=100)
+    notes: str | None = None
+    configuration_url: str | None = Field(default=None, min_length=1)
+    config_url: str | None = Field(default=None, min_length=1)
+    maximum_target_price: Decimal = Field(default=Decimal("0"), ge=0)
+    payment_preference: Literal["cash", "financing", "either"] = "cash"
+
+    @model_validator(mode="after")
+    def validate_urls(self) -> "CampaignFromConfigRequest":
+        if not ((self.configuration_url or "").strip() or (self.config_url or "").strip()):
+            raise ValueError("configuration_url must not be blank")
+        return self
+
+    @property
+    def effective_configuration_url(self) -> str:
+        return ((self.configuration_url or "").strip() or (self.config_url or "").strip())
 
 
 class CampaignCreateAndStartRequest(BaseModel):
@@ -137,6 +153,8 @@ class CampaignConfigurationResponse(BaseModel):
     list_price: Decimal | None
     maximum_target_price: Decimal
     payment_preference: str
+    vehicle_configuration_id: UUID | None = None
+    vehicle_configuration: VehicleConfigurationResponse | None = None
     requirements: list[ConfigurationRequirementResponse]
 
 

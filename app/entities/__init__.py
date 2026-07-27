@@ -7,6 +7,8 @@ from app.entities.dealer_offer import DealerOffer
 from app.entities.dealer_offer_feature import DealerOfferFeature
 from app.entities.inbound_email import InboundEmail
 from app.entities.offer import Offer
+from app.entities.vehicle_configuration import VehicleConfiguration
+from app.entities.vehicle_configuration_feature import VehicleConfigurationFeature
 
 __all__ = [
     "Campaign",
@@ -18,4 +20,6 @@ __all__ = [
     "DealerOfferFeature",
     "InboundEmail",
     "Offer",
+    "VehicleConfiguration",
+    "VehicleConfigurationFeature",
 ]

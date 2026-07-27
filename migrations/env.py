@@ -28,6 +28,8 @@ from app.entities.dealer import Dealer
 from app.entities.dealer_offer import DealerOffer  # noqa: F401
 from app.entities.dealer_offer_feature import DealerOfferFeature  # noqa: F401
 from app.entities.offer import Offer
+from app.entities.vehicle_configuration import VehicleConfiguration  # noqa: F401
+from app.entities.vehicle_configuration_feature import VehicleConfigurationFeature  # noqa: F401
 
 target_metadata = Base.metadata
 

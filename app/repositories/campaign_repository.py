@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.entities.campaign import Campaign
 from app.entities.campaign_configuration import CampaignConfiguration
 from app.entities.dealer_offer import DealerOffer
+from app.entities.vehicle_configuration import VehicleConfiguration
 
 
 class CampaignRepository:
@@ -24,6 +25,9 @@ class CampaignRepository:
             select(Campaign)
             .options(
                 joinedload(Campaign.configuration).joinedload(CampaignConfiguration.requirements),
+                joinedload(Campaign.configuration)
+                .joinedload(CampaignConfiguration.vehicle_configuration)
+                .joinedload(VehicleConfiguration.features),
                 joinedload(Campaign.offers).joinedload(DealerOffer.features),
             )
             .where(Campaign.id == campaign_id)

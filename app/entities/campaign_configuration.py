@@ -26,6 +26,12 @@ class CampaignConfiguration(Base):
         nullable=False,
         unique=True,
     )
+    vehicle_configuration_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("vehicle_configuration.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     configuration_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     variant: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -51,6 +57,7 @@ class CampaignConfiguration(Base):
     )
 
     campaign: Mapped["Campaign"] = relationship(back_populates="configuration")
+    vehicle_configuration: Mapped["VehicleConfiguration | None"] = relationship(back_populates="campaign_configurations")
     requirements: Mapped[list["ConfigurationRequirement"]] = relationship(
         back_populates="configuration",
         cascade="all, delete-orphan",
@@ -60,3 +67,4 @@ class CampaignConfiguration(Base):
 
 from app.entities.campaign import Campaign  # noqa: E402
 from app.entities.configuration_requirement import ConfigurationRequirement  # noqa: E402
+from app.entities.vehicle_configuration import VehicleConfiguration  # noqa: E402

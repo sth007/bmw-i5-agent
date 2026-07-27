@@ -35,6 +35,7 @@ from app.services.dealer_selection_service import DealerSelectionService
 from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.single_campaign_service import MultipleCampaignsError, SingleCampaignService
+from app.services.vehicle_configuration_formatter import format_configuration_items
 from app.entities.dealer_offer_feature import DealerOfferFeature
 
 
@@ -2093,17 +2094,7 @@ class CampaignContactService:
 
     @staticmethod
     def _format_configuration_items(campaign) -> list[str]:
-        configuration = getattr(campaign, "configuration", None)
-        if configuration is None:
-            return []
-        items: list[str] = []
-        for requirement in configuration.requirements:
-            label = (requirement.display_label or requirement.feature_key).strip()
-            if requirement.feature_value:
-                items.append(f"{label}: {requirement.feature_value.strip()}")
-            else:
-                items.append(label)
-        return items
+        return format_configuration_items(getattr(campaign, "configuration", None))
 
     @staticmethod
     def _extract_amounts(text: str) -> list[dict]:

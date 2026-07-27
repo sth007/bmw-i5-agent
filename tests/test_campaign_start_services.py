@@ -11,6 +11,18 @@ def test_extract_config_id_from_bmw_config_url(db_session) -> None:
     assert service.extract_config_id("https://configure.bmw.de/de_DE/configid/chtwyiio") == "chtwyiio"
 
 
+def test_extract_config_id_from_full_bmw_config_url_query(db_session) -> None:
+    service = CampaignService(db_session)
+
+    assert (
+        service.extract_config_id(
+            "https://configure.bmw.de/de_DE/configure/G61E/51HH/FKSFU,P0A90/SE000001"
+            "?initialConfigId=chtwyiio&effectDate=2026-09-08"
+        )
+        == "chtwyiio"
+    )
+
+
 def test_extract_config_id_rejects_invalid_bmw_url(db_session) -> None:
     service = CampaignService(db_session)
 

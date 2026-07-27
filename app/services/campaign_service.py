@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -18,9 +19,11 @@ from app.schemas.campaign import (
     CampaignStatusPatch,
 )
 from app.services.dealer_selection_service import DealerSelectionService
+from app.services.bmw_configuration_parser import BMWConfigurationParserError, BMWConfigurationParserService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.single_campaign_service import SingleCampaignService
+from app.services.vehicle_configuration_formatter import format_configuration_items
 
 
 class CampaignService:
@@ -28,6 +31,7 @@ class CampaignService:
         self.repository = CampaignRepository(db)
         self.normalizer = FeatureNormalizationService()
         self.single_campaign_service = SingleCampaignService(db)
+        self.configuration_parser = BMWConfigurationParserService(db)
 
     def create_campaign(self, payload: CampaignCreate) -> Campaign:
         self.single_campaign_service.delete_all_campaigns_except(None)
@@ -153,6 +157,9 @@ class CampaignService:
         config_url: str,
         dealer_limit: int,
         customer: CampaignCustomerInput | None,
+        maximum_target_price: Decimal = Decimal("0"),
+        payment_preference: str = "cash",
+        notes: str | None = None,
     ) -> CampaignStartResponse:
         cleaned_name = campaign_name.strip()
         cleaned_config_url = config_url.strip()
@@ -161,15 +168,23 @@ class CampaignService:
         if not cleaned_config_url:
             raise ValueError("config_url must not be blank")
 
-        config_id = self.extract_config_id(cleaned_config_url)
-        if not config_id:
-            raise ValueError("Invalid BMW configuration URL.")
+        try:
+            vehicle_configuration = self.configuration_parser.parse_and_store(cleaned_config_url)
+        except BMWConfigurationParserError as exc:
+            raise ValueError("Invalid BMW configuration URL.") from exc
+        config_id = vehicle_configuration.configuration_id or self.extract_config_id(cleaned_config_url)
         self.single_campaign_service.delete_all_campaigns_except(None)
         campaign = Campaign(
             name=cleaned_name,
             config_url=cleaned_config_url,
             config_id=config_id,
             status="DRAFT",
+            notes=notes.strip() if notes else None,
+        )
+        campaign.configuration = self._build_campaign_configuration_from_vehicle(
+            vehicle_configuration=vehicle_configuration,
+            maximum_target_price=maximum_target_price,
+            payment_preference=payment_preference,
         )
 
         try:
@@ -205,7 +220,7 @@ class CampaignService:
                 customer_name=customer_name,
                 customer_email=customer_email,
                 customer_phone=customer_phone,
-                configuration_items=self._format_configuration_items(campaign.configuration),
+                configuration_items=format_configuration_items(campaign.configuration),
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()
@@ -218,7 +233,7 @@ class CampaignService:
             campaign_id=campaign.id,
             campaign_name=campaign.name,
             config_url=cleaned_config_url,
-            config_id=config_id,
+            config_id=config_id or "",
             status=campaign.status,
             dealers=[
                 {
@@ -290,16 +305,7 @@ class CampaignService:
 
     @staticmethod
     def _format_configuration_items(configuration: CampaignConfiguration | None) -> list[str]:
-        if configuration is None:
-            return []
-        items: list[str] = []
-        for requirement in configuration.requirements:
-            label = (requirement.display_label or requirement.feature_key).strip()
-            if requirement.feature_value:
-                items.append(f"{label}: {requirement.feature_value.strip()}")
-            else:
-                items.append(label)
-        return items
+        return format_configuration_items(configuration)
 
     @staticmethod
     def extract_config_id(config_url: str | None) -> str | None:
@@ -310,6 +316,10 @@ class CampaignService:
             return None
         if parsed.netloc.lower() != "configure.bmw.de":
             return None
+
+        query_value = parse_qs(parsed.query).get("initialConfigId")
+        if query_value and query_value[0].strip():
+            return query_value[0].strip()
 
         path_parts = [part for part in parsed.path.split("/") if part]
         lowered_parts = [part.lower() for part in path_parts]
@@ -324,3 +334,41 @@ class CampaignService:
         if not config_id:
             return None
         return config_id
+
+    def _build_campaign_configuration_from_vehicle(
+        self,
+        *,
+        vehicle_configuration,
+        maximum_target_price: Decimal,
+        payment_preference: str,
+    ) -> CampaignConfiguration:
+        configuration = CampaignConfiguration(
+            vehicle_configuration=vehicle_configuration,
+            vehicle_configuration_id=vehicle_configuration.id,
+            configuration_url=vehicle_configuration.original_url,
+            model=(vehicle_configuration.model_name or vehicle_configuration.model_code or "BMW").strip(),
+            variant=(vehicle_configuration.variant or vehicle_configuration.model_code or "BMW").strip(),
+            package=None,
+            list_price=vehicle_configuration.list_price,
+            maximum_target_price=maximum_target_price,
+            payment_preference=payment_preference,
+        )
+        configuration.requirements = [
+            self._build_requirement_from_vehicle_feature(feature)
+            for feature in vehicle_configuration.features
+        ]
+        return configuration
+
+    def _build_requirement_from_vehicle_feature(self, feature) -> ConfigurationRequirement:
+        normalized_key, normalized_value = self.normalizer.normalize_feature(
+            feature.display_label or feature.feature_key,
+            feature.feature_value,
+        )
+        return ConfigurationRequirement(
+            feature_key=feature.feature_key,
+            feature_value=feature.feature_value,
+            normalized_key=normalized_key,
+            normalized_value=normalized_value,
+            display_label=feature.display_label,
+            is_mandatory=feature.is_mandatory,
+        )
