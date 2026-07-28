@@ -46,6 +46,7 @@ services:
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
     volumes:
       - ./data/n8n:/home/node/.n8n
+      - /volume1/docker/bmw-agent-backup:/backup
     networks:
       - bmw-agent-network
 
