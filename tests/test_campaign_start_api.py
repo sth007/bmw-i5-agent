@@ -412,6 +412,11 @@ def test_claim_contacts_uses_persisted_customer_and_configuration_in_email(clien
                 "email": "zaour.ludwigsburger@anaxo.de",
                 "phone": "+49 176 99791071",
             },
+            "email_body_template": (
+                "Sehr geehrte Damen und Herren des Autohauses {{ dealer_name }}!!!,\n\n"
+                "Kunde: {{ customer_name }}\n"
+                "{% for item in configuration_items %}- {{ item }}\n{% endfor %}"
+            ),
             "configuration": {
                 "configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
                 "model": "BMW i5 Touring",
@@ -445,6 +450,9 @@ def test_claim_contacts_uses_persisted_customer_and_configuration_in_email(clien
     )
     assert claim_response.status_code == 200
     body = claim_response.json()["contacts"][0]["body"]
+    assert "Autohauses Dealer 1!!!" in body
+    assert "Kunde: Zaour Assadov" in body
     assert "Zaour Assadov" in body
     assert "Variante: BMW i5 eDrive40 Touring" in body
     assert "Außenfarbe: Sophistograu Brillanteffekt metallic" in body
+    assert "Meine gewünschte Fahrzeugkonfiguration" not in body

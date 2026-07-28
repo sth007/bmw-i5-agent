@@ -42,6 +42,7 @@ class CampaignService:
             name=payload.name.strip(),
             config_url=payload.configuration.configuration_url,
             config_id=self.extract_config_id(payload.configuration.configuration_url),
+            email_body_template=payload.email_body_template.strip() if payload.email_body_template else None,
             notes=payload.notes.strip() if payload.notes else None,
         )
         configuration = CampaignConfiguration(
@@ -76,6 +77,7 @@ class CampaignService:
         create_payload = CampaignCreate(
             name=payload.campaign_name,
             notes=payload.notes,
+            email_body_template=payload.email_body_template,
             configuration=payload.configuration,
         )
         campaign = self.create_campaign(create_payload)
@@ -195,6 +197,7 @@ class CampaignService:
             config_url=original_url,
             config_id=config_id,
             status="DRAFT",
+            email_body_template=payload.email_body_template.strip() if payload.email_body_template else None,
             notes=payload.notes.strip() if payload.notes else None,
         )
         campaign.configuration = campaign_configuration
@@ -295,6 +298,7 @@ class CampaignService:
             config_url=cleaned_config_url,
             config_id=config_id,
             status="DRAFT",
+            email_body_template=email_body_template.strip() if email_body_template else None,
             notes=notes.strip() if notes else None,
         )
         campaign.configuration = self._build_campaign_configuration_from_vehicle(

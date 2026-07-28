@@ -37,6 +37,7 @@ class CampaignConfigurationCreate(BaseModel):
 class CampaignCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     notes: str | None = None
+    email_body_template: str | None = Field(default=None, min_length=1, max_length=20000)
     configuration: CampaignConfigurationCreate
 
 

@@ -115,6 +115,7 @@ class CampaignContactService:
                 customer_email=campaign.customer_email,
                 customer_phone=campaign.customer_phone,
                 configuration_items=self._format_configuration_items(campaign),
+                body_template=campaign.email_body_template,
             )
             subject = self._build_subject(campaign_id, rendered.subject)
             effective_to = payload.test_recipient.strip() if payload.test_mode and payload.test_recipient else (dealer.email or "").strip()
