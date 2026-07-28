@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.schemas.bmw_configuration import ResolvedBMWConfiguration
 from app.schemas.vehicle_configuration import VehicleConfigurationResponse
 
 
@@ -178,6 +179,7 @@ class CampaignConfigurationResponse(BaseModel):
     model: str
     variant: str
     package: str | None
+    resolved_configuration: ResolvedBMWConfiguration | None = None
     list_price: Decimal | None
     maximum_target_price: Decimal
     payment_preference: str

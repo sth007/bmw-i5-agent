@@ -27,3 +27,5 @@ BMW_OPTION_MAP: dict[str, dict[str, str]] = {
     "S05AS": {"name": "Driving Assistant", "category": "driver_assistance"},
     "S05AV": {"name": "Active Guard", "category": "driver_assistance"},
 }
+
+BMW_ACCESSORY_MAP: dict[str, str] = {}

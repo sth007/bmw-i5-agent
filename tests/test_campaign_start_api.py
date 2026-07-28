@@ -256,6 +256,15 @@ def test_campaign_from_public_config_creates_campaign_and_previews(client) -> No
     assert len(payload["email_previews"]) == 2
     assert "BMW i5 xDrive40 Touring" in payload["email_previews"][0]["body"]
     assert "Sophistograu Brillanteffekt metallic" in payload["email_previews"][0]["body"]
+    assert "SE000001" not in payload["email_previews"][0]["body"]
+    assert "Sonderausstattung: S05AS" not in payload["email_previews"][0]["body"]
+
+    campaign_response = client.get(f"/campaigns/{payload['campaign_id']}")
+    assert campaign_response.status_code == 200
+    campaign = campaign_response.json()
+    assert campaign["configuration"]["resolved_configuration"]["model"]["code"] == "51HH"
+    assert campaign["configuration"]["resolved_configuration"]["driver_assistance"][0]["code"] == "S05AS"
+    assert set(campaign["configuration"]["resolved_configuration"]["unknown_codes"]) == {"SE000001"}
 
 
 def test_campaign_from_public_config_uses_custom_email_body_template(client) -> None:

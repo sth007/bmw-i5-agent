@@ -20,9 +20,10 @@ from app.schemas.campaign import (
     CampaignStartResponse,
     CampaignStatusPatch,
 )
-from app.services.bmw_option_catalog import BMW_MODEL_MAP, BMW_OPTION_MAP, BMW_PAINT_MAP, BMW_UPHOLSTERY_MAP
+from app.services.bmw_option_catalog import BMW_MODEL_MAP
 from app.services.dealer_selection_service import DealerSelectionService
 from app.services.bmw_configuration_parser import BMWConfigurationParserError, BMWConfigurationParserService
+from app.services.bmw_configuration_resolver import resolve_bmw_configuration
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.single_campaign_service import SingleCampaignService
@@ -50,6 +51,7 @@ class CampaignService:
             model=payload.configuration.model.strip(),
             variant=payload.configuration.variant.strip(),
             package=payload.configuration.package.strip() if payload.configuration.package else None,
+            resolved_configuration=None,
             list_price=payload.configuration.list_price,
             maximum_target_price=payload.configuration.maximum_target_price,
             payment_preference=payload.configuration.payment_preference,
@@ -175,12 +177,18 @@ class CampaignService:
         option_codes = self._deduplicate_codes(public_config.option_codes)
         model_code = public_config.model_code.strip().upper()
         model_info = BMW_MODEL_MAP.get(model_code, {})
+        resolved_configuration = resolve_bmw_configuration(
+            model_code=model_code,
+            option_codes=option_codes,
+            accessories=public_config.accessories,
+        )
 
         campaign_configuration = CampaignConfiguration(
             configuration_url=original_url,
             model=(model_info.get("model_name") or model_code).strip(),
             variant=(model_info.get("variant") or model_code).strip(),
             package=None,
+            resolved_configuration=resolved_configuration.model_dump(mode="json"),
             list_price=None,
             maximum_target_price=payload.maximum_target_price,
             payment_preference=payload.payment_preference,
@@ -470,6 +478,7 @@ class CampaignService:
             model=(vehicle_configuration.model_name or vehicle_configuration.model_code or "BMW").strip(),
             variant=(vehicle_configuration.variant or vehicle_configuration.model_code or "BMW").strip(),
             package=None,
+            resolved_configuration=vehicle_configuration.normalized_data.get("resolved_configuration"),
             list_price=vehicle_configuration.list_price,
             maximum_target_price=maximum_target_price,
             payment_preference=payment_preference,
@@ -501,67 +510,97 @@ class CampaignService:
         option_codes: list[str],
         accessories: dict[str, object],
     ) -> list[ConfigurationRequirement]:
+        resolved_configuration = resolve_bmw_configuration(
+            model_code=model_code,
+            option_codes=option_codes,
+            accessories=accessories,
+        )
         requirements: list[ConfigurationRequirement] = []
-        model_info = BMW_MODEL_MAP.get(model_code, {})
         requirements.append(
             self._build_requirement(
                 SimpleNamespace(
                     feature_key="vehicle.model_name",
-                    feature_value=model_info.get("model_name") or model_code,
-                    display_label="Variante",
+                    feature_value=(resolved_configuration.model.name if resolved_configuration.model else model_code),
+                    display_label="Modell",
                     is_mandatory=True,
                 )
             )
         )
 
-        paint_code = next((code for code in option_codes if code.startswith("P")), None)
-        upholstery_code = next((code for code in option_codes if code.startswith("F")), None)
-
-        if paint_code:
+        if resolved_configuration.color is not None:
             requirements.append(
                 self._build_requirement(
                     SimpleNamespace(
                         feature_key="configuration.paint",
-                        feature_value=BMW_PAINT_MAP.get(paint_code, paint_code),
+                        feature_value=resolved_configuration.color.name,
                         display_label="Außenfarbe",
                         is_mandatory=False,
                     )
                 )
             )
-        if upholstery_code:
+        if resolved_configuration.interior is not None:
             requirements.append(
                 self._build_requirement(
                     SimpleNamespace(
                         feature_key="configuration.upholstery",
-                        feature_value=BMW_UPHOLSTERY_MAP.get(upholstery_code, upholstery_code),
+                        feature_value=resolved_configuration.interior.name,
                         display_label="Innenausstattung",
                         is_mandatory=False,
                     )
                 )
             )
 
-        for option_code in option_codes:
-            if option_code in {paint_code, upholstery_code}:
-                continue
-            option_info = BMW_OPTION_MAP.get(option_code)
+        for option in resolved_configuration.packages:
             requirements.append(
                 self._build_requirement(
                     SimpleNamespace(
-                        feature_key=f"configuration.option.{option_code.lower()}",
-                        feature_value=(option_info or {}).get("name", option_code),
-                        display_label=self._display_label_for_category((option_info or {}).get("category")),
+                        feature_key=f"configuration.option.{option.code.lower()}",
+                        feature_value=option.name,
+                        display_label="Paket",
                         is_mandatory=False,
                     )
                 )
             )
-
-        for accessory_key, accessory in accessories.items():
+        for option in resolved_configuration.wheels:
             requirements.append(
                 self._build_requirement(
                     SimpleNamespace(
-                        feature_key=f"configuration.accessory.{str(accessory_key).lower()}",
-                        feature_value=f"{getattr(accessory, 'accessoryId', accessory_key)} x{getattr(accessory, 'quantity', 1)}",
-                        display_label="Zubehoer",
+                        feature_key=f"configuration.option.{option.code.lower()}",
+                        feature_value=option.name,
+                        display_label="Räder",
+                        is_mandatory=False,
+                    )
+                )
+            )
+        for option in resolved_configuration.driver_assistance:
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key=f"configuration.option.{option.code.lower()}",
+                        feature_value=option.name,
+                        display_label="Fahrerassistenz",
+                        is_mandatory=False,
+                    )
+                )
+            )
+        for option in resolved_configuration.other_options:
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key=f"configuration.option.{option.code.lower()}",
+                        feature_value=option.name,
+                        display_label="Sonderausstattung",
+                        is_mandatory=False,
+                    )
+                )
+            )
+        for accessory in resolved_configuration.accessories:
+            requirements.append(
+                self._build_requirement(
+                    SimpleNamespace(
+                        feature_key=f"configuration.accessory.{accessory.code.lower()}",
+                        feature_value=accessory.name,
+                        display_label="Zubehör",
                         is_mandatory=False,
                     )
                 )
@@ -578,12 +617,3 @@ class CampaignService:
                 result.append(normalized)
                 seen.add(normalized)
         return result
-
-    @staticmethod
-    def _display_label_for_category(category: str | None) -> str:
-        mapping = {
-            "package": "Paket",
-            "wheels": "Räder",
-            "driver_assistance": "Fahrerassistenz",
-        }
-        return mapping.get(category or "", "Sonderausstattung")

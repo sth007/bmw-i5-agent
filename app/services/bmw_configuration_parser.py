@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.entities.vehicle_configuration import VehicleConfiguration
 from app.entities.vehicle_configuration_feature import VehicleConfigurationFeature
 from app.services.bmw_option_catalog import BMW_MODEL_MAP, BMW_OPTION_MAP, BMW_PAINT_MAP, BMW_UPHOLSTERY_MAP
+from app.services.bmw_configuration_resolver import format_resolved_configuration_items, resolve_bmw_configuration
 from app.schemas.vehicle_configuration import (
     BMWConfigurationParseResponse,
     DealerRequestPayload,
@@ -111,6 +112,7 @@ class BMWConfigurationParserService:
                 "vehicle": ParsedVehicle(brand="BMW"),
                 "pricing": ParsedPricing(list_price=None, currency="EUR"),
                 "configuration": ParsedConfigurationSection(),
+                "resolved_configuration": resolve_bmw_configuration(model_code="BMW", option_codes=[]),
                 "requirements": [],
             }
         if "configure" not in lowered_parts:
@@ -136,6 +138,11 @@ class BMWConfigurationParserService:
         model_info = BMW_MODEL_MAP.get(model_code, {})
         paint_name = BMW_PAINT_MAP.get(paint_code or "")
         upholstery_name = BMW_UPHOLSTERY_MAP.get(upholstery_code or "")
+
+        resolved_configuration = resolve_bmw_configuration(
+            model_code=model_code,
+            option_codes=ordered_codes,
+        )
 
         warnings: list[str] = []
         options: list[ParsedConfigurationSelection] = []
@@ -185,15 +192,6 @@ class BMWConfigurationParserService:
                         is_resolved=False,
                     )
                 )
-                features.append(
-                    ParsedFeatureRequirement(
-                        feature_key=f"configuration.option.{option_code.lower()}",
-                        feature_value=option_code,
-                        feature_code=option_code,
-                        display_label="Sonderausstattung",
-                        is_mandatory=False,
-                    )
-                )
                 continue
 
             options.append(
@@ -238,6 +236,7 @@ class BMWConfigurationParserService:
                 upholstery=ParsedChoice(code=upholstery_code, name=upholstery_name) if upholstery_code else None,
                 options=options,
             ),
+            "resolved_configuration": resolved_configuration,
             "requirements": features,
         }
 
@@ -245,18 +244,10 @@ class BMWConfigurationParserService:
         vehicle = extracted["vehicle"]
         source = extracted["source"]
         configuration = extracted["configuration"]
-        option_names = [option.name or option.code for option in configuration.options]
         model_name = vehicle.model_name or vehicle.model_code or "BMW Konfiguration"
         subject = f"Anfrage Barkauf – {model_name}"
 
-        lines = [model_name]
-        if configuration.paint is not None:
-            lines.append(f"Außenfarbe: {configuration.paint.name or configuration.paint.code}")
-        if configuration.upholstery is not None:
-            lines.append(f"Polster: {configuration.upholstery.name or configuration.upholstery.code}")
-        if option_names:
-            lines.append("Ausstattung:")
-            lines.extend(f"- {name}" for name in option_names)
+        lines = format_resolved_configuration_items(extracted["resolved_configuration"])
         lines.append("")
         lines.append("BMW-Konfigurationslink:")
         lines.append(source.original_url)
@@ -267,6 +258,7 @@ class BMWConfigurationParserService:
             vehicle=vehicle,
             pricing=extracted["pricing"],
             configuration=configuration,
+            resolved_configuration=extracted["resolved_configuration"],
             requirements=extracted["requirements"],
             dealer_request=DealerRequestPayload(subject=subject, configuration_text="\n".join(lines).strip()),
         )

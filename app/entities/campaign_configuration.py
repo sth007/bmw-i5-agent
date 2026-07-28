@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -36,6 +36,7 @@ class CampaignConfiguration(Base):
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     variant: Mapped[str] = mapped_column(String(120), nullable=False)
     package: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    resolved_configuration: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     list_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     maximum_target_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     payment_preference: Mapped[str] = mapped_column(

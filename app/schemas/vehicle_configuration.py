@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.bmw_configuration import ResolvedBMWConfiguration
+
 
 class BMWConfigurationParseRequest(BaseModel):
     configuration_url: str = Field(min_length=1)
@@ -79,6 +81,7 @@ class BMWConfigurationParseResponse(BaseModel):
     vehicle: ParsedVehicle
     pricing: ParsedPricing
     configuration: ParsedConfigurationSection
+    resolved_configuration: ResolvedBMWConfiguration
     requirements: list[ParsedFeatureRequirement]
     dealer_request: DealerRequestPayload
 

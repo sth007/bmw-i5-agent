@@ -26,6 +26,7 @@ Der aktuelle Schwerpunkt liegt auf einem robusten operativen Flow:
 - [Tests und Qualitaet](#tests-und-qualitaet)
 - [n8n und vorhandene Workflows](#n8n-und-vorhandene-workflows)
 - [Weitere Dokumentation](#weitere-dokumentation)
+- [BMW-Konfigurationspipeline](#bmw-konfigurationspipeline)
 
 ## Ueberblick
 
@@ -109,6 +110,17 @@ Bei einem erkannten Angebot liefert die API ein strukturiertes `offer`-Objekt mi
 - `DealerService`: Haendlerverwaltung und Import
 - `CampaignComparisonService`: Vergleich aller Angebote einer Kampagne
 - `OfferComparisonService`: Match gegen Konfigurationsanforderungen
+
+### BMW-Konfigurationspipeline
+
+Die Kampagnenerzeugung aus BMW-Konfigurationen ist datenorientiert aufgebaut:
+
+1. BMW-Rohdaten werden geparst und in eine strukturierte `resolved_configuration` ueberfuehrt.
+2. Die Kampagne speichert diese Struktur in `campaign_configuration.resolved_configuration`.
+3. `configuration_items` werden aus dieser Struktur generiert.
+4. Erst danach rendert Jinja den finalen E-Mail-Body.
+
+Unbekannte BMW-Codes werden in `unknown_codes` gespeichert, aber nicht im E-Mail-Text angezeigt.
 
 ## Projektstruktur
 
@@ -514,6 +526,8 @@ Typische Aufgaben in n8n:
 - auf Preisvergleiche oder Review-Signale reagieren
 
 ## Weitere Dokumentation
+
+- `docs/architecture/bmw_configuration_pipeline.md`
 
 - [docs/architecture/index.md](docs/architecture/index.md)
 - [docs/architecture/single_campaign_mode.md](docs/architecture/single_campaign_mode.md)

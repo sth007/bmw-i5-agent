@@ -7,3 +7,4 @@ The project is organized into small modules:
 - `app/agent.py` coordinates loading and ranking offers.
 - `app/evaluator.py` contains offer scoring logic.
 - `app/utils.py` provides reusable helpers.
+- `docs/architecture/bmw_configuration_pipeline.md` documents the data-oriented BMW configuration flow.

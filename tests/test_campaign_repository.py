@@ -11,6 +11,17 @@ def test_campaign_repository_persists_nested_configuration(db_session) -> None:
     campaign.configuration = CampaignConfiguration(
         model="BMW i5",
         variant="eDrive40",
+        resolved_configuration={
+            "model": {"code": "71HH", "name": "BMW i5 eDrive40 Touring"},
+            "color": {"code": "P0A90", "name": "Sophistograu Brillanteffekt metallic"},
+            "interior": None,
+            "packages": [],
+            "wheels": [],
+            "driver_assistance": [],
+            "other_options": [],
+            "accessories": [],
+            "unknown_codes": ["S0230"],
+        },
         maximum_target_price=Decimal("70000.00"),
         payment_preference="cash",
     )
@@ -32,6 +43,7 @@ def test_campaign_repository_persists_nested_configuration(db_session) -> None:
 
     assert loaded is not None
     assert loaded.configuration.model == "BMW i5"
+    assert loaded.configuration.resolved_configuration["unknown_codes"] == ["S0230"]
     assert loaded.configuration.requirements[0].normalized_key == "farbe"
 
 

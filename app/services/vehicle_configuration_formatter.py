@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from app.entities.campaign_configuration import CampaignConfiguration
 from app.entities.vehicle_configuration import VehicleConfiguration
+from app.services.bmw_configuration_resolver import format_resolved_configuration_items
 
 
 def format_configuration_items(configuration: CampaignConfiguration | None) -> list[str]:
     if configuration is None:
         return []
 
+    if configuration.resolved_configuration:
+        return format_resolved_configuration_items(configuration.resolved_configuration)
+
     if configuration.vehicle_configuration is not None:
+        normalized_resolved = configuration.vehicle_configuration.normalized_data.get("resolved_configuration")
+        if normalized_resolved:
+            return format_resolved_configuration_items(normalized_resolved)
         return _format_vehicle_configuration(configuration.vehicle_configuration)
 
     items: list[str] = []

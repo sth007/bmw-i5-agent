@@ -26,6 +26,11 @@ def test_full_configuration_url_extracts_expected_fields(db_session) -> None:
     assert [option.code for option in parsed.configuration.options] == ["S0337", "S03G9", "S09QV"]
     assert parsed.parser.status == "PARTIALLY_PARSED"
     assert parsed.parser.warnings == ["Unknown option code: S09QV"]
+    assert parsed.resolved_configuration.model.name == "BMW i5 xDrive40 Touring"
+    assert parsed.resolved_configuration.packages[0].name == "M Sportpaket"
+    assert parsed.resolved_configuration.wheels[0].name == "19 Zoll M Leichtmetallräder Doppelspeiche 935 M"
+    assert parsed.resolved_configuration.unknown_codes == ["S09QV"]
+    assert "S09QV" not in parsed.dealer_request.configuration_text
 
 
 def test_parse_and_store_is_idempotent_for_same_configuration(db_session) -> None:
@@ -60,3 +65,4 @@ def test_campaign_create_from_full_configuration_url_creates_vehicle_reference(d
     assert campaign.configuration is not None
     assert campaign.configuration.vehicle_configuration_id == parsed_configuration.id
     assert campaign.configuration.requirements[0].feature_key == "vehicle.model_name"
+    assert campaign.configuration.resolved_configuration["unknown_codes"] == ["S09QV"]
