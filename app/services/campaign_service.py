@@ -103,6 +103,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=self._format_configuration_items(campaign.configuration),
+                body_template=payload.email_body_template,
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()
@@ -227,6 +228,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=self._format_configuration_items(campaign.configuration),
+                body_template=payload.email_body_template,
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()
@@ -273,6 +275,7 @@ class CampaignService:
         maximum_target_price: Decimal = Decimal("0"),
         payment_preference: str = "cash",
         notes: str | None = None,
+        email_body_template: str | None = None,
     ) -> CampaignStartResponse:
         cleaned_name = campaign_name.strip()
         cleaned_config_url = config_url.strip()
@@ -334,6 +337,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=format_configuration_items(campaign.configuration),
+                body_template=email_body_template,
             )
             for dealer in dealers
             if dealer.email and dealer.email.strip()

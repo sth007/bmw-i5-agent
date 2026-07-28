@@ -166,6 +166,7 @@ def create_campaign_from_config(
             maximum_target_price=payload.maximum_target_price,
             payment_preference=payload.payment_preference,
             notes=payload.notes,
+            email_body_template=payload.email_body_template,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

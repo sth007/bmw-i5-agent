@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+from jinja2 import Environment, FileSystemLoader, TemplateError, TemplateNotFound
 
 from app.services.email_preview_service import EmailPreview
 
@@ -34,6 +34,7 @@ class EmailTemplateService:
         customer_email: str | None = None,
         customer_phone: str | None = None,
         configuration_items: list[str] | None = None,
+        body_template: str | None = None,
         language: str = "de",
     ) -> EmailPreview:
         subject_template_name = f"campaign_request_{language}_subject.j2"
@@ -50,13 +51,21 @@ class EmailTemplateService:
 
         try:
             subject_template = self.environment.get_template(subject_template_name)
-            body_template = self.environment.get_template(body_template_name)
         except TemplateNotFound as exc:
             LOGGER.exception("Email template could not be loaded: %s", exc.name)
             raise RuntimeError("Email template could not be loaded.") from exc
 
-        subject = subject_template.render(**context).strip()
-        body = body_template.render(**context).strip()
+        try:
+            body_template_instance = (
+                self.environment.from_string(body_template)
+                if body_template and body_template.strip()
+                else self.environment.get_template(body_template_name)
+            )
+            subject = subject_template.render(**context).strip()
+            body = body_template_instance.render(**context).strip()
+        except TemplateError as exc:
+            LOGGER.exception("Email template could not be rendered: %s", exc)
+            raise RuntimeError("Email template rendering failed.") from exc
 
         return EmailPreview(
             dealer_id=dealer_id,

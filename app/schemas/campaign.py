@@ -57,6 +57,7 @@ class CampaignFromConfigRequest(BaseModel):
     customer: CampaignCustomerInput
     dealer_limit: int = Field(default=3, ge=1, le=100)
     notes: str | None = None
+    email_body_template: str | None = Field(default=None, min_length=1, max_length=20000)
     configuration_url: str | None = Field(default=None, min_length=1)
     config_url: str | None = Field(default=None, min_length=1)
     maximum_target_price: Decimal = Field(default=Decimal("0"), ge=0)
@@ -92,6 +93,7 @@ class CampaignFromPublicConfigRequest(BaseModel):
     customer: CampaignCustomerInput
     dealer_limit: int = Field(default=3, ge=1, le=100)
     notes: str | None = None
+    email_body_template: str | None = Field(default=None, min_length=1, max_length=20000)
     maximum_target_price: Decimal = Field(default=Decimal("0"), ge=0)
     payment_preference: Literal["cash", "financing", "either"] = "cash"
     public_configuration: PublicConfigurationInput
@@ -102,6 +104,7 @@ class CampaignCreateAndStartRequest(BaseModel):
     dealer_limit: int = Field(default=3, ge=1, le=100)
     customer: CampaignCustomerInput
     notes: str | None = None
+    email_body_template: str | None = Field(default=None, min_length=1, max_length=20000)
     configuration: CampaignConfigurationCreate
 
 

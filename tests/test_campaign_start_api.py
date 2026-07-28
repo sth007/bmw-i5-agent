@@ -258,6 +258,59 @@ def test_campaign_from_public_config_creates_campaign_and_previews(client) -> No
     assert "Sophistograu Brillanteffekt metallic" in payload["email_previews"][0]["body"]
 
 
+def test_campaign_from_public_config_uses_custom_email_body_template(client) -> None:
+    dealer_import_response = client.post(
+        "/dealers/import",
+        json=[
+            {
+                "bmw_dealer_id": "bmw-public-config-001",
+                "name": "Dealer 1",
+                "city": "Stuttgart",
+                "email": "dealer1@example.com",
+                "is_published": True,
+            }
+        ],
+    )
+    assert dealer_import_response.status_code == 200
+
+    response = client.post(
+        "/api/campaigns/from-public-config",
+        json={
+            "campaign_name": "BMW i5 Zaour",
+            "dealer_limit": 1,
+            "customer": {
+                "name": "Zaour Assadov",
+                "email": "bmw.agent@assadov.de",
+                "phone": "+49 176 99791071",
+            },
+            "email_body_template": (
+                "Hallo {{ dealer_name }},\n"
+                "mein Name ist {{ customer_name }}.\n"
+                "{% for item in configuration_items %}- {{ item }}\n{% endfor %}"
+            ),
+            "public_configuration": {
+                "config_id": "chtwyiio",
+                "effect_date": "2026-09-08",
+                "model_code": "51HH",
+                "option_codes": ["FKSFU", "P0A90", "S0337", "S03G9", "S05AS"],
+                "accessories": {
+                    "SE000001": {
+                        "accessoryId": "SE000001",
+                        "quantity": 1,
+                    }
+                },
+                "original_configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["email_previews"][0]["body"].startswith("Hallo Dealer 1,")
+    assert "mein Name ist Zaour Assadov." in payload["email_previews"][0]["body"]
+    assert "Meine gewünschte Fahrzeugkonfiguration" not in payload["email_previews"][0]["body"]
+
+
 def test_create_and_start_campaign_persists_configuration_and_returns_previews(client) -> None:
     dealer_import_response = client.post(
         "/dealers/import",

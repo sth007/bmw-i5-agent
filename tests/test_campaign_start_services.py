@@ -92,6 +92,31 @@ def test_email_template_service_omits_missing_optional_customer_fields() -> None
     assert "Sehr geehrte Damen und Herren," in preview.body
 
 
+def test_email_template_service_uses_custom_body_template_when_provided() -> None:
+    preview = EmailTemplateService().render_campaign_request(
+        dealer_id=1,
+        campaign_name="BMW i5 Touring Juli 2026",
+        config_url="https://configure.bmw.de/de_DE/configid/chtwyiio",
+        dealer_name="BMW AG Niederlassung Stuttgart",
+        dealer_email="dealer@example.com",
+        customer_name="Max Mustermann",
+        customer_email="max.mustermann@example.de",
+        configuration_items=[
+            "Variante: BMW i5 xDrive40 Touring",
+            "Außenfarbe: Sophistograu Brillanteffekt metallic",
+        ],
+        body_template=(
+            "Hallo {{ dealer_name }},\n"
+            "Link: {{ config_url }}\n"
+            "{% for item in configuration_items %}* {{ item }}\n{% endfor %}"
+        ),
+    )
+
+    assert preview.body.startswith("Hallo BMW AG Niederlassung Stuttgart,")
+    assert "* Variante: BMW i5 xDrive40 Touring" in preview.body
+    assert "Meine gewünschte Fahrzeugkonfiguration" not in preview.body
+
+
 def test_start_campaign_persists_campaign_and_returns_previews(db_session) -> None:
     dealers = [
         Dealer(bmw_dealer_id="dealer-001", name="A", email="a@example.com", is_published=True),
@@ -191,6 +216,30 @@ def test_campaign_service_uses_exact_repository_selection(db_session) -> None:
     )
 
     assert [dealer.dealer_id for dealer in response.dealers] == [dealer.id for dealer in selected]
+
+
+def test_create_from_config_uses_custom_email_body_template(db_session) -> None:
+    dealers = [
+        Dealer(bmw_dealer_id="dealer-001", name="A", email="a@example.com", is_published=True),
+    ]
+    db_session.add_all(dealers)
+    db_session.commit()
+
+    response = CampaignService(db_session).create_from_config(
+        campaign_name="BMW i5 Touring Juli 2026",
+        config_url="https://configure.bmw.de/de_DE/configid/chtwyiio",
+        dealer_limit=1,
+        customer=CampaignCustomerInput(name="Max Mustermann"),
+        email_body_template=(
+            "Custom intro\n"
+            "Dealer: {{ dealer_name }}\n"
+            "{% for item in configuration_items %}- {{ item }}\n{% endfor %}"
+        ),
+    )
+
+    assert response.email_previews[0].body.startswith("Custom intro")
+    assert "Dealer: A" in response.email_previews[0].body
+    assert "Meine gewünschte Fahrzeugkonfiguration" not in response.email_previews[0].body
 
 
 def test_create_from_public_config_builds_configuration_from_codes(db_session) -> None:
