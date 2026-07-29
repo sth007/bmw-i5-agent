@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, TemplateError, TemplateNotFound
 
@@ -34,6 +36,7 @@ class EmailTemplateService:
         customer_email: str | None = None,
         customer_phone: str | None = None,
         configuration_items: list[str] | None = None,
+        resolved_configuration: Mapping[str, Any] | None = None,
         body_template: str | None = None,
         language: str = "de",
     ) -> EmailPreview:
@@ -47,6 +50,8 @@ class EmailTemplateService:
             "customer_email": self._clean_optional_value(customer_email),
             "customer_phone": self._clean_optional_value(customer_phone),
             "configuration_items": [item.strip() for item in (configuration_items or []) if item and item.strip()],
+            "resolved_configuration": resolved_configuration,
+            "configuration": resolved_configuration,
         }
 
         try:

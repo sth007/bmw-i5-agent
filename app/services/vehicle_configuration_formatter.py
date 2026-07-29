@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from app.entities.campaign_configuration import CampaignConfiguration
 from app.entities.vehicle_configuration import VehicleConfiguration
 from app.services.bmw_configuration_resolver import format_resolved_configuration_items
@@ -26,6 +29,21 @@ def format_configuration_items(configuration: CampaignConfiguration | None) -> l
         else:
             items.append(label)
     return items
+
+
+def get_resolved_configuration(configuration: CampaignConfiguration | None) -> Mapping[str, Any] | None:
+    if configuration is None:
+        return None
+
+    if configuration.resolved_configuration:
+        return configuration.resolved_configuration
+
+    if configuration.vehicle_configuration is not None:
+        normalized_resolved = configuration.vehicle_configuration.normalized_data.get("resolved_configuration")
+        if normalized_resolved:
+            return normalized_resolved
+
+    return None
 
 
 def _format_vehicle_configuration(configuration: VehicleConfiguration) -> list[str]:

@@ -27,7 +27,7 @@ from app.services.bmw_configuration_resolver import resolve_bmw_configuration
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.single_campaign_service import SingleCampaignService
-from app.services.vehicle_configuration_formatter import format_configuration_items
+from app.services.vehicle_configuration_formatter import format_configuration_items, get_resolved_configuration
 
 
 class CampaignService:
@@ -107,6 +107,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=self._format_configuration_items(campaign.configuration),
+                resolved_configuration=self._get_resolved_configuration(campaign.configuration),
                 body_template=payload.email_body_template,
             )
             for dealer in dealers
@@ -239,6 +240,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=self._format_configuration_items(campaign.configuration),
+                resolved_configuration=self._get_resolved_configuration(campaign.configuration),
                 body_template=payload.email_body_template,
             )
             for dealer in dealers
@@ -349,6 +351,7 @@ class CampaignService:
                 customer_email=customer_email,
                 customer_phone=customer_phone,
                 configuration_items=format_configuration_items(campaign.configuration),
+                resolved_configuration=self._get_resolved_configuration(campaign.configuration),
                 body_template=email_body_template,
             )
             for dealer in dealers
@@ -435,6 +438,10 @@ class CampaignService:
     @staticmethod
     def _format_configuration_items(configuration: CampaignConfiguration | None) -> list[str]:
         return format_configuration_items(configuration)
+
+    @staticmethod
+    def _get_resolved_configuration(configuration: CampaignConfiguration | None):
+        return get_resolved_configuration(configuration)
 
     @staticmethod
     def extract_config_id(config_url: str | None) -> str | None:

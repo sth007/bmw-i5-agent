@@ -35,7 +35,7 @@ from app.services.dealer_selection_service import DealerSelectionService
 from app.services.feature_normalization_service import FeatureNormalizationService
 from app.services.email_template_service import DEFAULT_CUSTOMER_NAME, EmailTemplateService
 from app.services.single_campaign_service import MultipleCampaignsError, SingleCampaignService
-from app.services.vehicle_configuration_formatter import format_configuration_items
+from app.services.vehicle_configuration_formatter import format_configuration_items, get_resolved_configuration
 from app.entities.dealer_offer_feature import DealerOfferFeature
 
 
@@ -115,6 +115,7 @@ class CampaignContactService:
                 customer_email=campaign.customer_email,
                 customer_phone=campaign.customer_phone,
                 configuration_items=self._format_configuration_items(campaign),
+                resolved_configuration=self._get_resolved_configuration(campaign),
                 body_template=campaign.email_body_template,
             )
             subject = self._build_subject(campaign_id, rendered.subject)
@@ -2096,6 +2097,10 @@ class CampaignContactService:
     @staticmethod
     def _format_configuration_items(campaign) -> list[str]:
         return format_configuration_items(getattr(campaign, "configuration", None))
+
+    @staticmethod
+    def _get_resolved_configuration(campaign):
+        return get_resolved_configuration(getattr(campaign, "configuration", None))
 
     @staticmethod
     def _extract_amounts(text: str) -> list[dict]:

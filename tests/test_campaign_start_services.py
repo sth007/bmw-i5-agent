@@ -117,6 +117,31 @@ def test_email_template_service_uses_custom_body_template_when_provided() -> Non
     assert "Meine gewünschte Fahrzeugkonfiguration" not in preview.body
 
 
+def test_email_template_service_exposes_resolved_configuration_to_custom_templates() -> None:
+    preview = EmailTemplateService().render_campaign_request(
+        dealer_id=1,
+        campaign_name="BMW i5 Touring Juli 2026",
+        config_url="https://configure.bmw.de/de_DE/configid/chtwyiio",
+        dealer_name="BMW AG Niederlassung Stuttgart",
+        dealer_email="dealer@example.com",
+        customer_name="Max Mustermann",
+        resolved_configuration={
+            "model": {"code": "51HH", "name": "BMW i5 xDrive40 Touring"},
+            "color": {"code": "P0A90", "name": "Sophistograu Brillanteffekt metallic"},
+            "unknown_codes": ["SE000001"],
+        },
+        body_template=(
+            "{{ resolved_configuration.model.name }}\n"
+            "{{ configuration.color.name }}\n"
+            "{{ resolved_configuration.unknown_codes|length }}"
+        ),
+    )
+
+    assert "BMW i5 xDrive40 Touring" in preview.body
+    assert "Sophistograu Brillanteffekt metallic" in preview.body
+    assert preview.body.endswith("1")
+
+
 def test_start_campaign_persists_campaign_and_returns_previews(db_session) -> None:
     dealers = [
         Dealer(bmw_dealer_id="dealer-001", name="A", email="a@example.com", is_published=True),
@@ -240,6 +265,45 @@ def test_create_from_config_uses_custom_email_body_template(db_session) -> None:
     assert response.email_previews[0].body.startswith("Custom intro")
     assert "Dealer: A" in response.email_previews[0].body
     assert "Meine gewünschte Fahrzeugkonfiguration" not in response.email_previews[0].body
+
+
+def test_create_from_public_config_custom_template_can_use_resolved_configuration(db_session) -> None:
+    dealers = [
+        Dealer(bmw_dealer_id="dealer-001", name="A", email="a@example.com", is_published=True),
+    ]
+    db_session.add_all(dealers)
+    db_session.commit()
+
+    response = CampaignService(db_session).create_from_public_config(
+        CampaignFromPublicConfigRequest.model_validate(
+            {
+                "campaign_name": "BMW i5 Zaour",
+                "dealer_limit": 1,
+                "customer": {
+                    "name": "Zaour Assadov",
+                    "email": "bmw.agent@assadov.de",
+                },
+                "email_body_template": (
+                    "Modell: {{ resolved_configuration.model.name }}\n"
+                    "{% for item in resolved_configuration.driver_assistance %}Assistenz: {{ item.name }}\n{% endfor %}"
+                    "Unbekannt: {{ resolved_configuration.unknown_codes|join(', ') }}"
+                ),
+                "public_configuration": {
+                    "config_id": "chtwyiio",
+                    "effect_date": "2026-09-08",
+                    "model_code": "51HH",
+                    "option_codes": ["FKSFU", "P0A90", "S0337", "S05AS"],
+                    "accessories": {"SE000001": {"accessoryId": "SE000001", "quantity": 1}},
+                    "original_configuration_url": "https://configure.bmw.de/de_DE/configid/chtwyiio",
+                },
+            }
+        )
+    )
+
+    body = response.email_previews[0].body
+    assert "Modell: BMW i5 xDrive40 Touring" in body
+    assert "Assistenz: Driving Assistant" in body
+    assert "Unbekannt: SE000001" in body
 
 
 def test_create_from_public_config_builds_configuration_from_codes(db_session) -> None:
